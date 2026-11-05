@@ -1,0 +1,45 @@
+{
+ "set": "development",
+ "minutes": 11854,
+ "minutes_with_a_dip_ahead": 2676,
+ "base_rate": 0.2257,
+ "alerts_per_hour": 2.0,
+ "scorers": {
+  "dips_85_last_hour": {
+   "auroc": 0.7044,
+   "at_alert_rate": {
+    "alert_minutes": 395,
+    "true_alerts": 206,
+    "precision": 0.522,
+    "recall": 0.077
+   }
+  },
+  "time_below_91_last_15_min": {
+   "auroc": 0.6406,
+   "at_alert_rate": {
+    "alert_minutes": 395,
+    "true_alerts": 88,
+    "precision": 0.223,
+    "recall": 0.033
+   }
+  },
+  "spo2_sd_last_15_min": {
+   "auroc": 0.6555,
+   "at_alert_rate": {
+    "alert_minutes": 395,
+    "true_alerts": 158,
+    "precision": 0.4,
+    "recall": 0.059
+   }
+  },
+  "model": {
+   "auroc": 0.7922,
+   "at_alert_rate": {
+    "alert_minutes": 395,
+    "true_alerts": 311,
+    "precision": 0.787,
+    "recall": 0.116
+   }
+  }
+ }
+}

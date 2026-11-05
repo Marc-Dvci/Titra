@@ -19,7 +19,7 @@ extern "C" {
 #endif
 
 #define TA_MAX_COTS 4
-#define TA_WHY_MAX 280
+#define TA_WHY_MAX 400
 #define TA_NOTE_MAX 120
 
 /* The constant start of every prompt, decoded once and shared between requests. */

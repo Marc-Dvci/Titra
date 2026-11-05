@@ -20,10 +20,10 @@ all: $(BUILD)/libtitra_core.so $(BUILD)/test_core
 $(BUILD):
 	mkdir -p $(BUILD)
 
-$(BUILD)/libtitra_core.so: $(SRCS) $(wildcard include/titra/*.h) | $(BUILD)
+$(BUILD)/libtitra_core.so: $(SRCS) $(wildcard src/*.inc) $(wildcard include/titra/*.h) | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -shared -o $@ $(SRCS) -lm
 
-$(BUILD)/test_core: $(SRCS) $(TESTS) tests/check.h tests/main.c $(wildcard include/titra/*.h) | $(BUILD)
+$(BUILD)/test_core: $(SRCS) $(wildcard src/*.inc) $(TESTS) tests/check.h tests/main.c $(wildcard include/titra/*.h) | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Itests -o $@ $(SRCS) $(TESTS) tests/main.c -lm
 
 test: $(BUILD)/test_core

@@ -65,6 +65,7 @@ class FactsC(ctypes.Structure):
         ("fallback_s", ctypes.c_int),
         ("restarts", ctypes.c_int),
         ("fallback_now", ctypes.c_int),
+        ("risk_pct", ctypes.c_int),
         ("flags", ctypes.c_uint32),
         ("priority", ctypes.c_int),
     ]
@@ -166,7 +167,7 @@ def flag_names(bits: int) -> list[str]:
 
 
 def facts_dict(f: FactsC) -> dict[str, int]:
-    return {name: int(getattr(f, name)) for name, _ in FactsC._fields_}
+    return {field[0]: int(getattr(f, field[0])) for field in FactsC._fields_}
 
 
 def score(rows: list[dict[str, Any]], window_s: int) -> dict[str, Any]:
@@ -219,7 +220,9 @@ def evaluate(set_name: str, thresholds: ThresholdsC | None = None, cases_path: P
             trace = traces[(case["family"], int(seed))]
             end_s = int(case["end_s"])
             facts = compute(to_seconds(trace), end_s, window_s, thresholds=thresholds)
-            true_rate = true_dips_per_h(trace[max(end_s - window_s, 0) : end_s], float(truth["below"]), int(truth["min_s"]))
+            true_rate = true_dips_per_h(
+                trace[max(end_s - window_s, 0) : end_s], float(truth["below"]), int(truth["min_s"])
+            )
             expect = list(case["expect"])
             allow = list(case["allow"])
             if true_rate >= float(truth["flag_at_per_h"]):

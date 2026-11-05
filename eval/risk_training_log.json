@@ -1,0 +1,33 @@
+{
+ "final": {
+  "trees": 60,
+  "depth": 2
+ },
+ "grid_leave_one_seed_out": [
+  {
+   "trees": 30,
+   "depth": 2,
+   "auroc": 0.7356
+  },
+  {
+   "trees": 60,
+   "depth": 2,
+   "auroc": 0.7423
+  },
+  {
+   "trees": 30,
+   "depth": 3,
+   "auroc": 0.734
+  },
+  {
+   "trees": 60,
+   "depth": 3,
+   "auroc": 0.7347
+  },
+  {
+   "trees": 100,
+   "depth": 3,
+   "auroc": 0.7303
+  }
+ ]
+}

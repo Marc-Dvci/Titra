@@ -64,6 +64,7 @@ typedef struct {
     int fallback_s;
     int restarts;
     int fallback_now;         /* the last second of the window was in fallback */
+    int risk_pct;             /* the early-warning model's chance of a dip in ten minutes; -1 with too little history */
     uint32_t flags;
     int priority;             /* the deterministic order: higher needs the nurse sooner */
 } tf_facts_t;

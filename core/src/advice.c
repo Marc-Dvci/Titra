@@ -8,8 +8,8 @@
 #include <string.h>
 
 #define MAX_NUMBERS 24
-#define WHY_RUN_FIRST 100 /* characters before the first number in a sentence */
-#define WHY_RUN_NEXT 40   /* characters after each number */
+#define WHY_RUN_FIRST 120 /* characters before the first number in a sentence */
+#define WHY_RUN_NEXT 60   /* characters after each number */
 #define WHY_NUMBERS 4     /* numbers in one sentence */
 
 static const char SYSTEM_PREFIX[] =
@@ -117,6 +117,7 @@ int ta_cot_numbers(const tf_facts_t *f, char out[][12], int cap) {
     add_int(out, cap, &n, f->hold_s);
     add_int(out, cap, &n, f->fallback_s);
     add_int(out, cap, &n, f->restarts);
+    if (f->risk_pct >= 0) add_int(out, cap, &n, f->risk_pct);
     return n;
 }
 
@@ -155,8 +156,10 @@ static void put_facts(sb_t *b, const tf_facts_t *f) {
            f->cot, f->seconds / 60, f->time_in_target_pct, f->above_95_on_o2_pct, f->below_85_pct);
     sb_put(b, "desaturation episodes %d, longest %d seconds; ", f->desat_episodes, f->longest_desat_s);
     if (early[0] && late[0]) sb_put(b, "FiO2 from %s to %s, highest %s; ", early, late, top);
-    sb_put(b, "probe-off events %d; no valid reading %d percent; hold %d seconds; fallback %d seconds; restarts %d.\n",
+    sb_put(b, "probe-off events %d; no valid reading %d percent; hold %d seconds; fallback %d seconds; restarts %d",
            f->probe_events, f->invalid_pct, f->hold_s, f->fallback_s, f->restarts);
+    if (f->risk_pct >= 0) sb_put(b, "; forecast chance of a dip below 85 in the next 10 minutes %d percent", f->risk_pct);
+    sb_put(b, ".\n");
     sb_put(b, "Flags: ");
     put_flag_names(b, f->flags);
     sb_put(b, ".\n");
@@ -189,7 +192,7 @@ int ta_watch_prompt(const tf_facts_t *cots, int n, const char *const *notes, cha
     }
     sb_put(&b,
            "List the cots in the order the nurse should go to them, as JSON: "
-           "{\"notes\":[{\"cot\":N,\"action\":\"...\",\"why\":\"one short sentence\"}]}");
+           "{\"notes\":[{\"cot\":N,\"action\":\"...\",\"why\":\"one sentence of at most 15 words\"}]}");
     return sb_done(&b);
 }
 
@@ -202,8 +205,8 @@ int ta_handover_prompt(const tf_facts_t *cots, int n, char *out, size_t cap) {
         sb_put(&b, "\n");
     }
     sb_put(&b,
-           "For each cot in order, write one sentence for the next nurse with what happened on this shift, as JSON: "
-           "{\"cots\":[{\"cot\":N,\"summary\":\"one sentence\"}]}");
+           "For each cot in order, write one sentence of at most 20 words for the next nurse with what happened on this "
+           "shift, as JSON: {\"cots\":[{\"cot\":N,\"summary\":\"one sentence\"}]}");
     return sb_done(&b);
 }
 
@@ -226,8 +229,8 @@ int ta_incident_prompt(const ta_incident_t *inc, char *out, size_t cap) {
     const char *after = after_index < k ? nums[after_index] : before;
     sb_put(&b,
            "Incident on cot %d: %s. Titra %s. It lasted %d seconds. FiO2 was %s before and %s after.\n"
-           "Write one sentence for the biomedical engineer saying what failed, what Titra did, for how long and whether "
-           "FiO2 moved, as JSON: {\"note\":\"one sentence\"}",
+           "Write one sentence of at most 25 words for the biomedical engineer saying what failed, what Titra did, for how "
+           "long and whether FiO2 moved, as JSON: {\"note\":\"one sentence\"}",
            inc->cot, inc->what, inc->did, inc->duration_s, before, after);
     return sb_done(&b);
 }
@@ -237,10 +240,11 @@ int ta_incident_prompt(const ta_incident_t *inc, char *out, size_t cap) {
 static void gr_text_rule(sb_t *b, const char *name, const char (*numbers)[12], int count) {
     sb_put(b, "%snum ::= ", name);
     for (int i = 0; i < count; i++) sb_put(b, "%s\"%s\"", i ? " | " : "", numbers[i]);
-    sb_put(b, "\n%s ::= ch{1,%d} (%snum ch{1,%d}){0,%d}\n", name, WHY_RUN_FIRST, name, WHY_RUN_NEXT, WHY_NUMBERS);
+    /* Digits come only from the list, and a number never touches another number. A sentence ends in a full stop. */
+    sb_put(b, "\n%s ::= ch{1,%d} (%snum ch{1,%d}){0,%d} \".\"\n", name, WHY_RUN_FIRST, name, WHY_RUN_NEXT, WHY_NUMBERS);
 }
 
-static void gr_common(sb_t *b) { sb_put(b, "ch ::= [a-zA-Z ,.;:'()%%/-]\n"); }
+static void gr_common(sb_t *b) { sb_put(b, "ch ::= [a-zA-Z ,.;:'()%%/-] | \"FiO2\" | \"SpO2\"\n"); }
 
 static void gr_note_rules(sb_t *b, const tf_facts_t *f) {
     char name[16];
@@ -317,7 +321,7 @@ int ta_incident_grammar(const ta_incident_t *inc, char *out, size_t cap) {
 }
 
 /* The longest sentence the grammar allows, at the worst plausible 2.5 characters a token, plus the JSON around it. */
-static int sentence_tokens(void) { return (WHY_RUN_FIRST + WHY_NUMBERS * (WHY_RUN_NEXT + 4)) * 2 / 5; }
+static int sentence_tokens(void) { return (WHY_RUN_FIRST + WHY_NUMBERS * (WHY_RUN_NEXT + 4) + 1) * 2 / 5; }
 int ta_watch_max_tokens(int n) { return 8 + n * (sentence_tokens() + 20); }
 int ta_handover_max_tokens(int n) { return 8 + n * (sentence_tokens() + 12); }
 int ta_incident_max_tokens(void) { return 8 + sentence_tokens(); }
@@ -379,6 +383,11 @@ static int read_int(const char **p, int *out) {
 static int numbers_ok(const char *text, const char (*allowed)[12], int count) {
     const char *p = text;
     while (*p) {
+        /* The 2 in FiO2 and SpO2 is part of a name. */
+        if ((strncmp(p, "FiO2", 4) == 0 || strncmp(p, "SpO2", 4) == 0) && !isdigit((unsigned char)p[4])) {
+            p += 4;
+            continue;
+        }
         if (!isdigit((unsigned char)*p) && !(*p == '.' && isdigit((unsigned char)p[1]))) {
             p++;
             continue;

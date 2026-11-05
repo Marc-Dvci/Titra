@@ -56,8 +56,9 @@ TEST(test_a_calm_window_raises_no_flag) {
     CHECK_EQ_INT(f.probe_events, 0);
     CHECK_EQ_INT(f.fio2_early_pm, 300);
     CHECK_EQ_INT(f.fio2_late_pm, 300);
-    CHECK_EQ_INT(f.priority, 0);
+    CHECK(f.priority <= 50); /* no flag and full time in target: only the forecast, at most half its percent */
     CHECK_EQ_INT(f.fallback_now, 0);
+    CHECK(f.risk_pct >= 0 && f.risk_pct <= 100);
 }
 
 TEST(test_time_in_target_uses_the_room_air_rule) {
@@ -267,6 +268,24 @@ TEST(test_no_data_gives_empty_facts_and_no_flags) {
     CHECK_EQ_INT(f.seconds, 0);
     tf_compute(ring, CAP, -5, 10, 3, 0, &th, &f);
     CHECK_EQ_INT(f.seconds, 10);
+}
+
+TEST(test_the_forecast_needs_fifteen_minutes_of_history) {
+    calm(899);
+    CHECK_EQ_INT(facts(899, 0).risk_pct, -1);
+    calm(900);
+    CHECK(facts(900, 0).risk_pct >= 0);
+}
+
+TEST(test_the_forecast_breaks_ties_but_never_outweighs_a_flag) {
+    /* The most the forecast can add is 50, and the smallest flag that can harm adds 200. */
+    calm(3600);
+    tf_facts_t f = facts(3600, 0);
+    CHECK(f.risk_pct / 2 <= 50);
+    set_spo2(100, 120, 70);
+    set_spo2(300, 320, 70);
+    tf_facts_t desats = facts(3600, 0);
+    CHECK(desats.priority >= 300);
 }
 
 TEST(test_flag_names_and_json) {

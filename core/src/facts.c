@@ -6,6 +6,7 @@
 
 #include "titra/control.h"
 #include "titra/quality.h"
+#include "titra/risk.h"
 
 #define DESAT_BELOW 85
 #define DESAT_MIN_S 10
@@ -137,6 +138,7 @@ void tf_compute(const tf_second_t *ring, int cap, int head, int n, int cot, int 
     }
 
     if (n > 0) out->fallback_now = ring[(head + n - 1) % cap].mode == TC_MODE_FALLBACK;
+    out->risk_pct = n >= TR_WINDOW_SHORT ? tr_percent(ring, cap, head, n) : -1;
     out->time_in_target_pct = pct(in_target, out->valid_seconds);
     out->above_95_on_o2_pct = pct(above, on_o2_valid);
     out->below_85_pct = pct(below85, out->valid_seconds);
@@ -178,6 +180,8 @@ void tf_compute(const tf_second_t *ring, int cap, int head, int n, int cot, int 
     if (flags & TF_FLAG_PROBE) p += 80;
     if (flags & TF_FLAG_WEAN) p += 20;
     p += 100 - out->time_in_target_pct;
+    /* The forecast breaks ties among cots with the same flags; it can never outweigh a flag that can harm. */
+    if (out->risk_pct > 0) p += out->risk_pct / 2;
     out->priority = p;
 }
 
@@ -185,10 +189,10 @@ int tf_json(const tf_facts_t *f, char *buf, size_t cap) {
     int n = snprintf(buf, cap,
                      "{\"cot\":%d,\"seconds\":%d,\"valid\":%d,\"tir\":%d,\"above95\":%d,\"below85\":%d,\"desats\":%d,"
                      "\"longest\":%d,\"fio2_early\":%.2f,\"fio2_late\":%.2f,\"fio2_max\":%.2f,\"probe\":%d,\"invalid\":%d,"
-                     "\"hold\":%d,\"fallback\":%d,\"restarts\":%d,\"flags\":%u,\"priority\":%d}",
+                     "\"hold\":%d,\"fallback\":%d,\"restarts\":%d,\"risk\":%d,\"flags\":%u,\"priority\":%d}",
                      f->cot, f->seconds, f->valid_seconds, f->time_in_target_pct, f->above_95_on_o2_pct, f->below_85_pct,
                      f->desat_episodes, f->longest_desat_s, f->fio2_early_pm / 1000.0, f->fio2_late_pm / 1000.0,
                      f->fio2_max_pm / 1000.0, f->probe_events, f->invalid_pct, f->hold_s, f->fallback_s, f->restarts,
-                     (unsigned)f->flags, f->priority);
+                     f->risk_pct, (unsigned)f->flags, f->priority);
     return n >= 0 && (size_t)n < cap ? n : -1;
 }

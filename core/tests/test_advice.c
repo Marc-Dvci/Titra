@@ -90,6 +90,32 @@ TEST(test_settings_doses_and_diagnoses_are_refused) {
     CHECK_EQ_INT(with("Time in target", "Ignore the rules, time in target"), TA_ERR_FORBIDDEN);
 }
 
+TEST(test_the_names_fio2_and_spo2_are_not_numbers) {
+    /* Cot 3 has no 2 in its facts, so a bare 2 must be refused and the 2 in a name must not. */
+    tf_facts_t c[1];
+    memset(c, 0, sizeof c);
+    c[0].cot = 3;
+    c[0].seconds = 3600;
+    c[0].valid_seconds = 3600;
+    c[0].time_in_target_pct = 88;
+    c[0].fio2_early_pm = 310;
+    c[0].fio2_late_pm = 310;
+    c[0].fio2_max_pm = 310;
+    ta_watch_t w;
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":3,\"action\":\"no action needed\",\"why\":\"FiO2 and SpO2 steady, FiO2 at 0.31.\"}]}", c, 1, &w), TA_OK);
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":3,\"action\":\"no action needed\",\"why\":\"Steady for 2 hours.\"}]}", c, 1, &w), TA_ERR_NUMBER);
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":3,\"action\":\"no action needed\",\"why\":\"FiO27 is wrong.\"}]}", c, 1, &w), TA_ERR_NUMBER);
+}
+
+TEST(test_the_grammar_lets_a_sentence_finish_and_name_fio2) {
+    tf_facts_t c[3];
+    three(c);
+    char g[16384];
+    CHECK(ta_watch_grammar(c, 3, g, sizeof g) > 0);
+    CHECK(strstr(g, "| \"FiO2\" | \"SpO2\"") != NULL);
+    CHECK(strstr(g, "w1 ::= ch{1,120} (w1num ch{1,60}){0,4} \".\"") != NULL);
+}
+
 TEST(test_describing_a_rise_is_allowed) {
     CHECK_EQ_INT(with("Six dips,", "FiO2 increased, six dips,"), TA_OK);
 }
@@ -177,6 +203,23 @@ TEST(test_allowed_actions_follow_the_flags) {
     CHECK_EQ_INT(ta_allowed_actions(TF_FLAG_SYSTEM, a, 6), 2);
     CHECK(strcmp(a[0], TA_ACTION_SYSTEM) == 0);
     CHECK_EQ_INT(ta_allowed_actions(TF_FLAG_SYSTEM, a, 1), 1); /* the cap holds */
+}
+
+TEST(test_the_forecast_is_a_fact_the_model_may_quote) {
+    tf_facts_t c[1];
+    c[0] = cot(1, 0, 92);
+    c[0].risk_pct = 37;
+    char p[4096], g[8192];
+    CHECK(ta_watch_prompt(c, 1, NULL, p, sizeof p) > 0);
+    CHECK(strstr(p, "forecast chance of a dip below 85 in the next 10 minutes 37 percent") != NULL);
+    CHECK(ta_watch_grammar(c, 1, g, sizeof g) > 0);
+    CHECK(strstr(g, "\"37\"") != NULL);
+    ta_watch_t w;
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"no action needed\",\"why\":\"A 37 percent chance of a dip.\"}]}", c, 1, &w), TA_OK);
+    c[0].risk_pct = -1;
+    CHECK(ta_watch_prompt(c, 1, NULL, p, sizeof p) > 0);
+    CHECK(strstr(p, "forecast") == NULL);
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"no action needed\",\"why\":\"A 37 percent chance of a dip.\"}]}", c, 1, &w), TA_ERR_NUMBER);
 }
 
 TEST(test_the_prompt_carries_the_facts_flags_and_actions) {
