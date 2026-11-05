@@ -188,7 +188,7 @@ Then open http://127.0.0.1:8080 for the nurse station.
 | Only each cot's controller may reach that cot's drivers under the committed policy | [`qnx/image/titra.secpol`](qnx/image/titra.secpol) | [`tests/test_policy.py`](tests/test_policy.py) |
 | The spec's figures match their published abstracts and the case set | [`eval/reference.json`](eval/reference.json) | [`tests/test_eval_cases.py`](tests/test_eval_cases.py) |
 
-Tests: `make -C core test` runs 79 C tests; `python -m pytest --cov` runs 171 Python tests in a new random order each
+Tests: `make -C core test` runs 79 C tests; `python -m pytest --cov` runs 173 Python tests in a new random order each
 time, each within 30 seconds. Coverage of the C core by gcov: 94 to 100% of lines and 82 to 98% of branches per file
 (`make -C core coverage`). CI runs both on every push.
 

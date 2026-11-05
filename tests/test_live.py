@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from bench.frames import BlFrame
-from bench.live import CotTwin, Link, Recorder, first, judge, last_fio2_before
+from bench.live import CotTwin, Link, Recorder, closed_loop, first, judge, last_fio2_before
 
 
 def test_recorder_filters_by_time_cot_and_kind() -> None:
@@ -109,3 +109,19 @@ def test_link_keeps_the_newest_client_and_refuses_while_cut() -> None:
     out = asyncio.run(scenario())
     assert out[0] == b"one"
     assert out[-1] == b""
+
+
+def test_closed_loop_counts_valid_seconds_in_the_window_against_the_trial_definition() -> None:
+    twin = CotTwin(1, Recorder())
+    twin.seconds = [
+        (1.0, 93, 0, 0.30),  # in target on oxygen
+        (2.0, 99, 0, 0.30),  # above target on oxygen
+        (3.0, None, 0, 0.30),  # no displayed value: not counted
+        (4.0, 92, 1, 0.30),  # flagged: not counted
+        (5.0, 99, 0, 0.21),  # in target in room air
+        (50.0, 93, 0, 0.30),  # outside the window
+    ]
+    out = closed_loop({1: twin}, 0.0, 10.0)["1"]
+    assert out["seconds_valid"] == 3
+    assert out["time_in_target_pct"] == 66.7
+    assert out["scenario"] == f"{twin.scn.family}:{twin.scn.seed}"

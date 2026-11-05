@@ -33,8 +33,14 @@ branch = true
 
 [tool.coverage.report]
 # The decision core is the C library in core/ (coverage by gcov, `make -C core coverage`). This figure covers the
-# bench twin; the tuner and the command line are scripts and are excluded.
+# bench twin; the tuner and the command line are scripts and are excluded. The parts of bench/live.py that drive the
+# QNX guest over ssh run only against the guest: their evidence is the fault run, eval/results/faults.json.
 omit = ["*/bench/tune.py", "*/bench/__main__.py"]
+exclude_also = [
+    'class Guest:',
+    'async def (wait_quiet|run_case|main_async)\(',
+    'def main\(\) -> None:',
+]
 fail_under = 90
 show_missing = true
 

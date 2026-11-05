@@ -42,16 +42,18 @@ def tuned_params() -> dict[str, float]:
     return data
 
 
-def _one(job: tuple[str, int, str, dict[str, float]]) -> dict[str, Any]:
-    family, seed, controller, params = job
-    r = run(draw(family, seed), controller, params if controller == "titra" else None)
+def _one(job: tuple[str, int, str, dict[str, float], dict[str, Any]]) -> dict[str, Any]:
+    family, seed, controller, params, cfg = job
+    r = run(draw(family, seed, cfg), controller, params if controller == "titra" else None)
     return {"family": family, "seed": seed, "controller": controller, **r.summary.as_dict()}
 
 
-def evaluate(set_name: str, workers: int = 4, params: dict[str, float] | None = None) -> dict[str, Any]:
-    cfg = load()
+def evaluate(
+    set_name: str, workers: int = 4, params: dict[str, float] | None = None, cfg: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    cfg = load() if cfg is None else cfg
     params = tuned_params() if params is None else params
-    jobs = [(f, s, c, params) for f in families(cfg) for s in seeds(set_name, cfg) for c in CONTROLLERS]
+    jobs = [(f, s, c, params, cfg) for f in families(cfg) for s in seeds(set_name, cfg) for c in CONTROLLERS]
     with ProcessPoolExecutor(max_workers=workers) as pool:
         runs = list(pool.map(_one, jobs))
     table: dict[str, dict[str, dict[str, float]]] = {}
