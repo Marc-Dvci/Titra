@@ -1,0 +1,25 @@
+{
+  "description": "Published figures quoted beside Titra's results. They come from other patients and simulators, so they are context, not a head-to-head comparison.",
+  "trial": {
+    "source": "Subhi R et al. Automated oxygen control for preterm infants receiving continuous positive airway pressure in southwest Nigeria: an open-label, randomised, crossover trial. Lancet Glob Health 2025. doi:10.1016/S2214-109X(24)00458-3",
+    "infants_enrolled": 49,
+    "target": "SpO2 91-95% on oxygen, 91-100% in room air",
+    "time_in_target_manual_pct": 30.1,
+    "time_in_target_automated_pct": 88.1,
+    "adjusted_mean_difference_pct": 58.0,
+    "difference_ci95_pct": [48.0, 67.9]
+  },
+  "bench": {
+    "source": "Salverda HH et al. Neonatal automated oxygen titration algorithms: response characteristics and performance. Arch Dis Child Fetal Neonatal Ed 2026. doi:10.1136/archdischild-2026-330785",
+    "devices": 6,
+    "max_sustained_fio2_escalation_per_min": [0.30, 0.20, 0.20, 0.10, 0.062, 0.30],
+    "max_sustained_fio2_reduction_per_min": [1.20, 0.20, 0.20, 0.13, 0.53, 1.32],
+    "closed_loop_time_in_target_pct": [51, 52, 55, 77, 64, 53],
+    "fio2_adjustments_per_min_range": [1.9, 5.1],
+    "fio2_measured": "in the respiratory circuit"
+  },
+  "signal_loss": {
+    "source": "Langanky et al. Pulse oximetry signal loss during hypoxic episodes in preterm infants receiving automated oxygen control. Eur J Pediatr 2024. PMC11192802",
+    "finding": "Signal loss is common during prolonged hypoxaemic episodes; a backup FiO2 applied during signal loss may prolong them."
+  }
+}

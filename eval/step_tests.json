@@ -1,0 +1,9 @@
+{
+  "description": "Open-loop step tests after the bench protocol of Salverda et al. (2026): the simulated oximeter reports a fixed SpO2 whatever the FiO2. The result is the largest FiO2 change over any window_s window, per minute.",
+  "window_s": 60,
+  "cot_settings": {"fio2_min": 0.21, "fio2_max": 1.0, "backup_fio2": 0.30},
+  "tests": [
+    {"id": "S1", "name": "hypoxaemia", "start_fio2": 0.30, "settle_s": 120, "settle_spo2": 93, "spo2": 80, "hold_s": 600},
+    {"id": "S2", "name": "hyperoxaemia", "start_fio2": 0.60, "settle_s": 120, "settle_spo2": 93, "spo2": 98, "hold_s": 600}
+  ]
+}
