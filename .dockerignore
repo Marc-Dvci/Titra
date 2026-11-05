@@ -1,8 +1,0 @@
-# An allowlist: nothing reaches a build unless it is named here, so keys, caches and runs cannot slip in.
-*
-!app/
-!web/
-!requirements.txt
-
-**/__pycache__
-web/node_modules
