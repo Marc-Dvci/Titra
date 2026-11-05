@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Titra nurse station</title>
+<style>
+  :root {
+    --ink: #202124; --muted: #5f6368; --rule: #e0e3e7; --ground: #ffffff;
+    --blue: #1a73e8; --green: #188038; --band: #e6f4ea; --amber: #b06000; --amber-bg: #fef7e0;
+    --red: #c5221f; --red-bg: #fce8e6;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ground); color: var(--ink);
+         font: 15px/1.45 Roboto, "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 16px; padding: 20px 32px 12px; border-bottom: 1px solid var(--rule); }
+  header h1 { font-size: 22px; font-weight: 500; margin: 0; letter-spacing: 0.2px; }
+  header .sub { color: var(--muted); }
+  header .clock { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); }
+  main { padding: 0 32px 24px; }
+  .cot { display: grid; grid-template-columns: 120px 150px 130px 1fr 170px; gap: 24px; align-items: center;
+         padding: 20px 0; border-bottom: 1px solid var(--rule); }
+  .name { font-size: 18px; font-weight: 500; }
+  .name small { display: block; color: var(--muted); font-size: 13px; font-weight: 400; }
+  .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; }
+  .big { font-size: 44px; font-weight: 400; font-variant-numeric: tabular-nums; line-height: 1.05; }
+  .big.in { color: var(--green); } .big.out { color: var(--ink); } .big.none { color: var(--muted); }
+  .fio2 { font-size: 26px; font-variant-numeric: tabular-nums; color: var(--blue); }
+  .state { font-size: 14px; }
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 13px; font-weight: 500; }
+  .chip.control { background: #e8f0fe; color: var(--blue); }
+  .chip.hold { background: var(--amber-bg); color: var(--amber); }
+  .chip.fallback, .chip.offline { background: var(--red-bg); color: var(--red); }
+  .alarm { margin-top: 6px; font-size: 13px; color: var(--muted); min-height: 18px; }
+  .alarm.medium { color: var(--amber); } .alarm.high { color: var(--red); font-weight: 500; }
+  svg { width: 100%; height: 78px; display: block; }
+  .tir { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  footer { padding: 14px 32px; color: var(--muted); font-size: 13px; }
+  @media (max-width: 900px) { .cot { grid-template-columns: 1fr 1fr; } svg { grid-column: 1 / -1; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Titra</h1><span class="sub">Nurse station</span>
+  <span class="clock" id="clock"></span>
+</header>
+<main id="cots" aria-live="polite"></main>
+<footer id="foot">QNX 8.0</footer>
+<script>
+const ALARMS = {1: "SpO2 signal lost, FiO2 held", 2: "Fallback FiO2 applied", 4: "Oximeter data repeated or frozen",
+  8: "SpO2 below 85%", 16: "SpO2 below 80%", 32: "SpO2 above 98% on oxygen", 64: "FiO2 at its upper limit"};
+const MODES = {control: "Control", hold: "Hold", fallback: "Fallback"};
+let history = {};
+
+function inTarget(spo2, fio2) { return fio2 <= 0.211 ? spo2 >= 91 : spo2 >= 91 && spo2 <= 95; }
+
+function alarmText(c) {
+  const list = Object.entries(ALARMS).filter(([bit]) => c.alarms & bit).map(([, t]) => t);
+  if (c.valve_link === 0) list.push("Blender driver not answering");
+  return list.join(" · ");
+}
+
+function trend(points) {
+  const W = 600, H = 78, span = 900;
+  if (!points || !points.length) return `<svg viewBox="0 0 ${W} ${H}"></svg>`;
+  const t1 = points[points.length - 1][0], t0 = t1 - span;
+  const x = t => ((t - t0) / span) * W;
+  const ys = v => H - 4 - ((Math.max(70, Math.min(100, v)) - 70) / 30) * (H - 8);
+  const yf = v => H - 4 - (Math.min(1, v) - 0.21) / 0.79 * (H - 8);
+  const band = `<rect x="0" y="${ys(95)}" width="${W}" height="${ys(91) - ys(95)}" fill="#e6f4ea"/>`;
+  let s = "", f = "";
+  for (const [t, spo2, fio2] of points) {
+    if (t < t0) continue;
+    if (spo2 >= 0) s += `${s ? "L" : "M"}${x(t).toFixed(1)},${ys(spo2).toFixed(1)}`;
+    if (fio2 >= 0) f += `${f ? "L" : "M"}${x(t).toFixed(1)},${yf(fio2).toFixed(1)}`;
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
+    aria-label="SpO2 and FiO2, last 15 minutes">${band}
+    <path d="${f}" fill="none" stroke="#1a73e8" stroke-width="1.5" opacity="0.8"/>
+    <path d="${s}" fill="none" stroke="#202124" stroke-width="1.6"/></svg>`;
+}
+
+function timeInTarget(points) {
+  let n = 0, k = 0;
+  for (const [, spo2, fio2] of points || []) if (spo2 >= 0) { n++; if (inTarget(spo2, fio2)) k++; }
+  return n ? Math.round(100 * k / n) + "% in target" : "";
+}
+
+function row(c) {
+  if (c.offline) {
+    return `<section class="cot"><div class="name">Cot ${c.cot}</div><div class="big none">--</div><div></div>
+      <div><span class="chip offline">Controller restarting</span></div><div></div></section>`;
+  }
+  const valid = c.sample === 0 && c.spo2 >= 0;
+  const cls = !valid ? "none" : inTarget(c.spo2, c.fio2) ? "in" : "out";
+  const level = c.alarm >= 3 ? "high" : c.alarm === 2 ? "medium" : "";
+  const pts = (history[c.cot] || []);
+  return `<section class="cot" aria-label="Cot ${c.cot}">
+    <div class="name">Cot ${c.cot}<small>backup FiO2 ${c.backup.toFixed(2)}</small></div>
+    <div><div class="label">SpO2</div><div class="big ${cls}">${valid ? c.spo2 + "<small>%</small>" : "--"}</div></div>
+    <div><div class="label">FiO2</div><div class="fio2">${c.fio2.toFixed(2)}</div></div>
+    <div>${trend(pts)}<div class="tir">${timeInTarget(pts)}</div></div>
+    <div class="state"><span class="chip ${c.mode}">${MODES[c.mode] || c.mode}</span>
+      <div class="alarm ${level}">${alarmText(c)}</div></div>
+  </section>`;
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/cots", {cache: "no-store"});
+    const d = await r.json();
+    document.getElementById("cots").innerHTML = d.cots.map(row).join("");
+    const up = Math.floor(d.uptime);
+    document.getElementById("foot").textContent =
+      `QNX 8.0 · station up ${Math.floor(up / 3600)} h ${Math.floor(up / 60) % 60} min`;
+  } catch (e) {
+    document.getElementById("foot").textContent = "Board not answering";
+  }
+  document.getElementById("clock").textContent = new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+}
+
+async function refreshHistory() {
+  try {
+    const d = await (await fetch("/api/history", {cache: "no-store"})).json();
+    for (const c of d.cots) history[c.cot] = c.points;
+  } catch (e) { /* the next poll retries */ }
+}
+
+refreshHistory(); refresh();
+setInterval(refresh, 1000);
+setInterval(refreshHistory, 5000);
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# Titra's processes and the High Availability Manager, added to the system partition (/system).
+[uid=0 gid=0 perms=755] bin/spo2d=__TITRA_BUILD__/spo2d
+[uid=0 gid=0 perms=755] bin/valved=__TITRA_BUILD__/valved
+[uid=0 gid=0 perms=755] bin/titractl=__TITRA_BUILD__/titractl
+[uid=0 gid=0 perms=755] bin/titra-launch=__TITRA_BUILD__/titra-launch
+[uid=0 gid=0 perms=755] bin/station=__TITRA_BUILD__/station
+[uid=0 gid=0 perms=755] bin/ham=usr/sbin/ham
+[uid=0 gid=0 perms=755] bin/titra-burn=__TITRA_BUILD__/titra-burn
+lib/libham.so.2=usr/lib/libham.so.2
+# This OpenSSH runs a separate sshd-auth for each login; post_start.custom links it where sshd looks for it.
+[uid=0 gid=0 perms=755] bin/sshd-auth=usr/libexec/sshd-auth

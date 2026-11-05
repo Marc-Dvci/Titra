@@ -25,3 +25,4 @@ data/runs/
 # C builds
 core/build/
 qnx/build/
+qnx/station/page.h

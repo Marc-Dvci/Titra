@@ -1,0 +1,10 @@
+# Titra: the High Availability Manager first, then every cot's processes and the nurse station.
+# This OpenSSH's sshd exits at boot without sshd-auth, so it starts again once the helper is linked in.
+ln -sPf /system/bin/sshd-auth /usr/libexec/sshd-auth
+echo "---> Starting sshd with sshd-auth"
+STARTU_P(sshd_t,__SSHD_ID__) /system/bin/sshd -f /system/etc/ssh/sshd_config
+echo "---> Starting HAM"
+START_P(ham_t) /system/bin/ham
+waitfor /proc/ham 10
+echo "---> Starting Titra"
+/system/bin/titra-launch -c 3 -h 10.0.2.2 -P 5551 -B 0.30 -S SUBST_P(-T)

@@ -37,27 +37,30 @@ bounded time to a safe state, which the fault matrix below measures.
 | QNX capability | Where Titra uses it |
 |---|---|
 | Resource managers | `/dev/spo2/N` (oximeter driver), `/dev/valve/N` (blender driver), `/dev/titra/cotN` (cot status) |
-| Message passing with priority inheritance | The controller's requests run in each driver at the controller's priority |
-| Timer pulses | The 1 Hz control tick, and the drivers' command and link deadlines |
-| High Availability Manager | Restarts a driver or controller that dies |
-| Security policy | Only the controller of cot N may connect to `/dev/valve/N`; the nurse station and the handover assistant cannot |
-| Thread priorities and sporadic scheduling | Control above display and logging; the handover assistant runs inside a CPU budget |
+| Message passing with priority inheritance | The controller's devctl requests run in each driver at the controller's priority |
+| Timer pulses | The controller's 1 Hz tick |
+| High Availability Manager | Restarts a driver that dies; restarts a controller that dies, and kills one that misses its heartbeats |
+| Security policy | Every process runs under its own type, one set per cot; only the controller of cot N may connect to the drivers of cot N |
+| Thread priorities | Control at priority 30, status reads and the nurse station at 10 |
 
 ## Architecture
 
 ```
- host (bench twin, outside the guest)            QNX 8.0 guest (QEMU x86_64)
- ------------------------------------            ----------------------------------------------
- simulated baby + oximeter, cot N  --serial-->   spo2d -n N        /dev/spo2/N      (priority inherited)
-                                                    ^ MsgSend
-                                                 titractl -n N     /dev/titra/cotN  (1 Hz, priority 30)
-                                                    v MsgSend
- simulated blender, cot N         <--serial--   valved -n N       /dev/valve/N     (priority inherited)
-   heartbeat watchdog -> safe FiO2
-                                                 station           HTTP, nurse view (priority 10)
-                                                 scribe            handover note (sporadic budget)
-                                                 ham               restarts any process above that dies
+ host (bench twin, outside the guest)          QNX 8.0 guest (QEMU x86_64)
+ ------------------------------------          ------------------------------------------------------------
+ simulated baby + oximeter, cot N  --link-->   spo2d -n N      spo2dN_t     /dev/spo2/N
+                                                  ^ devctl (MsgSend, priority inherited)
+                                               titractl -n N   titractlN_t  /dev/titra/cotN   1 Hz, priority 30
+                                                  v devctl (MsgSend, priority inherited)
+ simulated blender, cot N         <--link--    valved -n N     valvedN_t    /dev/valve/N
+   own watchdog: hold, then fallback
+                                               station         station_t    HTTP nurse view, priority 10
+                                               ham             ham_t        restarts and heartbeats
 ```
+
+Each link is a serial port (`/dev/serN`) or a serial-to-Ethernet converter port (`tcp:HOST:PORT`), the way bedside
+devices are often networked. In QEMU all six links of three cots run over TCP to the host, because the emulated PC has
+four serial ports.
 
 Each cot has its own three processes. The deterministic core in `core/` (control law, signal quality, frame codecs,
 command guard) is plain C11 with no dynamic allocation. The same source files build into the QNX processes and into a
@@ -125,12 +128,12 @@ committed in `eval/fault_matrix.json` before the code they test.
 | F4 | SpO2, pulse and perfusion frozen while the clock advances | Untrusted after 20 frames, fallback at once | Fallback 22 s |
 | F5 | Noise bytes between frames, and every third frame corrupted | Bad frames rejected, control continues on the valid ones | No crash, no fallback |
 | F6 | Oximeter driver killed | Restarted by HAM, control resumes | Alarm 2 s, resume 10 s, no fallback |
-| F7 | Controller killed | Driver holds and alarms, HAM restarts the controller, control resumes from the current FiO2 | Alarm 5 s, resume 10 s, no step at resume |
+| F7 | Controller killed | HAM restarts the controller, which resumes from the current FiO2; the driver holds the last command meanwhile, and alarms if that takes over 3 s | Resume 10 s, no step at resume |
 | F8 | Controller hung (stopped, still alive) | HAM sees the missed heartbeat and restarts it | Alarm 5 s, resume 15 s |
-| F9 | Blender driver killed | Blender holds and alarms, HAM restarts the driver | Alarm 5 s, resume 10 s |
+| F9 | Blender driver killed | HAM restarts the driver; the blender holds its last FiO2 meanwhile, and alarms if that takes over 3 s | Resume 10 s |
 | F10 | Blender link cut | Blender holds and alarms, fallback 15 s after the last frame; the driver also alarms | Alarm 5 s, fallback 17 s |
 | F11 | Out-of-bounds command (FiO2 above the limit, or a step above the slew limit) | Refused by the blender driver and logged | 100% refused |
-| F12 | Handover assistant or nurse station opens `/dev/valve/N` | Refused by the kernel | 100% refused |
+| F12 | A process of the nurse station's type opens `/dev/valve/N` | Refused by the kernel under the security policy | 100% refused |
 | F13 | Every core busy with lower-priority work | Controllers keep their 1 Hz tick | 0 missed ticks |
 | F14 | F7 on cot 2 | Cots 1 and 3 keep their 1 Hz commands | 0 missed ticks on cots 1 and 3 |
 
