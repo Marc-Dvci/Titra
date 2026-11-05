@@ -1,16 +1,18 @@
 {
-  "description": "Ground truth for the advisor's flags, from the simulator's scenario families. Committed before the code that scores it. Each run is one family and seed from eval/scenarios.json under Titra's controller. A window is the last window_s seconds ending at end_s. expect: flags that should be raised. allow: flags that may also be raised without counting against precision. Any other flag counts as a false alarm. stable is the healthy control and must raise nothing. Thresholds are tuned on the development seeds; the held-out seeds are run once, after tuning ends.",
-  "window_s": 3600,
+  "description": "Ground truth for the advisor's flags, from the simulator. Committed before the code that scores it. Each run is one family and seed from eval/scenarios.json under Titra's controller. A window is the last window_s seconds ending at end_s. expect: flags that should be raised. allow: flags that may also be raised without counting as a false alarm. Any other flag is a false alarm. The frequent_desaturations flag is scored against the simulator's true saturation, which the flag never sees: expected when true dips (below `below` for at least min_s) reach flag_at_per_h, a false alarm when they stay under clear_below_per_h, and not scored in between. Thresholds are tuned on the development seeds; the held-out seeds are run once, after tuning ends.",
+  "window_s": 10800,
+  "desat_truth": {"below": 0.85, "min_s": 10, "flag_at_per_h": 2.0, "clear_below_per_h": 1.0},
   "cases": [
-    {"family": "stable", "end_s": 7200, "expect": [], "allow": []},
+    {"family": "stable", "end_s": 10800, "expect": [], "allow": []},
     {"family": "stable", "end_s": 14400, "expect": [], "allow": []},
-    {"family": "worsening", "end_s": 14400, "expect": ["rising_need"], "allow": ["frequent_desaturations", "high_need", "hold_or_fallback"]},
-    {"family": "improving", "end_s": 14400, "expect": ["wean_opportunity"], "allow": ["frequent_desaturations", "high_need", "hold_or_fallback"]},
-    {"family": "artefact_heavy", "end_s": 7200, "expect": ["probe_trouble"], "allow": ["hold_or_fallback", "frequent_desaturations", "high_need", "rising_need", "wean_opportunity"]},
-    {"family": "artefact_heavy", "end_s": 14400, "expect": ["probe_trouble"], "allow": ["hold_or_fallback", "frequent_desaturations", "high_need", "rising_need", "wean_opportunity"]},
-    {"family": "unstable", "end_s": 7200, "expect": ["frequent_desaturations"], "allow": ["hold_or_fallback", "high_need", "rising_need", "wean_opportunity", "probe_trouble"]},
-    {"family": "unstable", "end_s": 14400, "expect": ["frequent_desaturations"], "allow": ["hold_or_fallback", "high_need", "rising_need", "wean_opportunity", "probe_trouble"]}
+    {"family": "moderate", "end_s": 14400, "expect": [], "allow": ["hold_or_fallback"]},
+    {"family": "worsening", "end_s": 14400, "expect": ["rising_need"], "allow": ["high_need", "hold_or_fallback"]},
+    {"family": "improving", "end_s": 14400, "expect": ["wean_opportunity"], "allow": ["hold_or_fallback"]},
+    {"family": "artefact_heavy", "end_s": 10800, "expect": ["probe_trouble", "hold_or_fallback"], "allow": ["rising_need", "wean_opportunity", "high_need"]},
+    {"family": "artefact_heavy", "end_s": 14400, "expect": ["probe_trouble", "hold_or_fallback"], "allow": ["rising_need", "wean_opportunity", "high_need"]},
+    {"family": "unstable", "end_s": 10800, "expect": [], "allow": ["hold_or_fallback", "high_need", "rising_need", "wean_opportunity", "probe_trouble"]},
+    {"family": "unstable", "end_s": 14400, "expect": [], "allow": ["hold_or_fallback", "high_need", "rising_need", "wean_opportunity", "probe_trouble"]}
   ],
   "seeds": {"development": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], "held_out": [1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009]},
-  "targets": {"stable_flags_raised": 0, "recall_each_expected_flag": 0.8}
+  "targets": {"stable_windows_with_a_flag": 0, "recall_each_expected_flag": 0.8}
 }
