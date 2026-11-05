@@ -1,3 +1,1 @@
-# What the server needs to run (Python 3.12). CI, the Docker image and the dev container install this.
-fastapi==0.162.0
-uvicorn==0.54.0
+# The bench twin uses only the Python 3.12 standard library; the C core builds with make and a C11 compiler.

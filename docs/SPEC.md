@@ -123,7 +123,7 @@ committed in `eval/fault_matrix.json` before the code they test.
 | F2 | Oximeter cable cut (no frames) | Hold and alarm, fallback 30 s after the last frame | Alarm 5 s, fallback 32 s |
 | F3 | Oximeter repeats its last frame | Untrusted after 3 frames, fallback at once | Fallback 5 s |
 | F4 | SpO2, pulse and perfusion frozen while the clock advances | Untrusted after 20 frames, fallback at once | Fallback 22 s |
-| F5 | Garbage and bad checksums on the oximeter line | Frames rejected, control continues on valid frames | No crash, no fallback |
+| F5 | Noise bytes between frames, and every third frame corrupted | Bad frames rejected, control continues on the valid ones | No crash, no fallback |
 | F6 | Oximeter driver killed | Restarted by HAM, control resumes | Alarm 2 s, resume 10 s, no fallback |
 | F7 | Controller killed | Driver holds and alarms, HAM restarts the controller, control resumes from the current FiO2 | Alarm 5 s, resume 10 s, no step at resume |
 | F8 | Controller hung (stopped, still alive) | HAM sees the missed heartbeat and restarts it | Alarm 5 s, resume 15 s |

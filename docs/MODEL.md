@@ -34,24 +34,38 @@ Lung disease enters through two parameters, as in clinical descriptions of prete
 
 - **Ventilation-perfusion mismatch** lowers end-capillary oxygen tension by a pressure deficit `dP` (mmHg):
   `PcO2 = PAO2 - dP`.
-- **Shunt** `f` mixes venous blood into the arterial stream. Neglecting dissolved oxygen, the arterial saturation is
-  `SaO2 = Sc - f / (1 - f) * D / (1.34 * Hb)`, with `Sc` the end-capillary saturation, `D` = 4 mL/dL the
-  arteriovenous oxygen content difference and `Hb` = 15 g/dL.
+- **Shunt** `f` is the fraction of cardiac output that bypasses ventilated alveoli and carries mixed venous blood.
 
-End-capillary saturation comes from the Severinghaus dissociation curve, shifted to a neonatal P50 of 20 mmHg by
-scaling the tension:
+Oxygen content is bound plus dissolved oxygen, `C(P) = 1.34 * Hb * S(P) + 0.003 * P` (mL/dL), with `Hb` = 15 g/dL.
+Mixed venous content is the arterial content minus the arteriovenous difference `D`. Solving the mixing equation
+`Ca = (1 - f) * Cc + f * (Ca - D)` gives:
+
+```
+Ca = Cc - f / (1 - f) * D
+```
+
+`D` = 3 mL/dL, from an oxygen consumption of 7 mL/kg/min over a cardiac output near 230 mL/kg/min. The arterial
+saturation is the saturation of blood with content `Ca`, found by bisection on the tension.
+
+Saturation comes from the Severinghaus dissociation curve, shifted to a neonatal P50 of 20 mmHg by scaling the
+tension:
 
 ```
 S(P) = 1 / (23400 / (Q^3 + 150 Q) + 1),   Q = P * 26.8 / 20
 ```
 
+Over the scenario ranges this gives steady-state FiO2 needs from 0.21 to about 0.45 for 93% saturation, and 1 to 2
+saturation points per 1% FiO2 around the target.
+
 Arterial blood reaches the oximeter site after a 5 s circulation delay.
 
 ## Disturbances
 
-- **Apnoea.** Episodes arrive as a Poisson process. During an apnoea the alveolar oxygen fraction falls at 0.0047 per
-  second (oxygen consumption of 7 mL/kg/min drawn from a functional residual capacity of 25 mL/kg). When breathing
-  resumes it washes in again toward the circuit FiO2. Pulse rate falls by 30 to 60 /min during the longer apnoeas.
+- **Apnoea.** Episodes arrive as a Poisson process. During an apnoea the alveolar oxygen fraction decays
+  exponentially at 0.7% per second. Oxygen consumption alone would empty a 25 mL/kg lung store about twice as fast,
+  but the blood's oxygen store buffers the fall, and the rate is chosen so that apnoeas of 8 to 25 s produce nadirs
+  mostly between 75% and 90%. When breathing resumes the alveolar fraction washes in again toward the circuit FiO2.
+  Pulse rate falls by up to 60 /min during the longer apnoeas.
 - **Shunt episodes.** Episodes of atelectasis or secretions raise the shunt fraction by 0.05 to 0.15 for 5 to 20
   minutes.
 - **Drift.** The shunt fraction follows a slow mean-reverting random walk (time constant 30 minutes). Worsening and

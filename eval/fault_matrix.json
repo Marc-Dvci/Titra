@@ -13,7 +13,7 @@
      "expect": {"fallback_within_s": 5}},
     {"id": "F4", "fault": "frozen_values", "cot": 2, "duration_s": 60,
      "expect": {"fallback_within_s": 22}},
-    {"id": "F5", "fault": "garbage_line", "cot": 2, "duration_s": 60,
+    {"id": "F5", "fault": "garbage_line", "cot": 2, "duration_s": 60, "noise_bytes_between_frames": 40, "corrupt_every_nth_frame": 3,
      "expect": {"no_crash": true, "no_fallback": true}},
     {"id": "F6", "fault": "kill_spo2d", "cot": 2,
      "expect": {"alarm_within_s": 2, "resume_within_s": 10, "no_fallback": true}},
