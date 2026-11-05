@@ -1,0 +1,12 @@
+{
+  "description": "The early-warning model's task, committed before it is trained. At each sampled minute of a closed-loop run under Titra's controller, from what the advisor can see in the past hour, score how likely a dip is to start within the next horizon_s seconds. A dip is the simulator's true saturation below `below` for at least min_s seconds; the model never sees true saturation. Minutes already inside a dip are not scored. Training and every choice of model use the development seeds only, split by seed. The held-out seeds are scored once, after the choice is final. The model is kept only if it beats the best rule baseline, computed the same way, on both AUROC and the share of dips caught at the same number of alerts per cot per hour. Everything here is simulated.",
+  "below": 0.85,
+  "min_s": 10,
+  "horizon_s": 600,
+  "first_s": 1800,
+  "step_s": 60,
+  "alerts_per_hour": 2.0,
+  "families": ["stable", "moderate", "unstable", "worsening", "improving", "artefact_heavy"],
+  "seeds": {"development": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], "held_out": [1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009]},
+  "baselines": ["dips_85_last_hour", "time_below_91_last_15_min", "spo2_sd_last_15_min"]
+}
