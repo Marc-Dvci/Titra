@@ -21,3 +21,7 @@ web/dist*/
 data/cache/
 data/runs/
 *.log
+
+# C builds
+core/build/
+qnx/build/
