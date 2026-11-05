@@ -1,0 +1,23 @@
+# Keys and local settings
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+
+# Web
+node_modules/
+web/dist*/
+
+# Runs, caches and anything made for the film stay outside the repository
+data/cache/
+data/runs/
+*.log

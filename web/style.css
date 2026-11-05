@@ -1,0 +1,54 @@
+/* TEMPLATE: neutral placeholder; the project's visual identity replaces it (confirmed with Marc first). */
+:root {
+  --ink: #1f2328;
+  --muted: #57606a;
+  --accent: #0a7d6e;
+  --ground: #ffffff;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: var(--ground);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e6edf3;
+    --muted: #8b949e;
+    --ground: #0d1117;
+  }
+}
+
+main {
+  max-width: 44rem;
+  margin: 12vh auto;
+  padding: 0 1.5rem;
+}
+
+h1 {
+  font-size: 2.6rem;
+  margin: 0 0 0.5rem;
+}
+
+.lede {
+  font-size: 1.2rem;
+  color: var(--muted);
+}
+
+button {
+  font: inherit;
+  padding: 0.6rem 1.2rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+pre {
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+}
+
+.foot {
+  color: var(--muted);
+  font-size: 0.85rem;
+}

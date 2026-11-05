@@ -1,0 +1,11 @@
+-r requirements.txt
+codespell==2.4.3    # spelling, settings in pyproject.toml
+httpx==0.28.1       # the test client
+hypothesis==6.168.5 # property-based tests
+mypy==2.4.1         # types, settings in pyproject.toml
+playwright==1.64.1  # scripts/render_diagram.py and browser tests (then: playwright install chromium)
+pytest==9.2.0
+pytest-cov==7.1.0   # coverage of the decision core, lines and branches, settings in pyproject.toml
+pytest-randomly==5.0.0 # runs the tests in a new random order each time and prints the seed
+pytest-timeout==2.4.0  # fails a test that hangs, limit in pyproject.toml
+ruff==0.17.3        # lint and format, settings in pyproject.toml

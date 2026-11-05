@@ -1,0 +1,6 @@
+%% Source of docs/architecture.png, the diagram in the README. Rebuild: python scripts/render_diagram.py
+%% TEMPLATE: replace with the project's own flow; mark where models read and where code decides.
+flowchart TD
+    A["Input<br/>what the user gives"] --> B["Model step<br/>reads, locates, phrases"]
+    B --> C{{"Decision<br/>fixed rules, app/core.py"}}
+    C --> D["Output<br/>with the evidence it rests on"]

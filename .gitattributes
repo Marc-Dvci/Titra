@@ -1,0 +1,7 @@
+# Shell scripts run on Linux too, whatever machine they were last saved on.
+*.sh text eol=lf
+
+# Keep the languages bar honest: mark generated or vendored files so they don't count.
+# web/dist/** linguist-generated
+# data/** linguist-generated
+# vendor/** linguist-vendored

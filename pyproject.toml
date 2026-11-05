@@ -1,0 +1,42 @@
+# Tool settings only: the project runs from source, it is not installed as a package (see requirements.txt).
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+# pycodestyle errors, pyflakes, bugbear, import order
+select = ["E4", "E7", "E9", "F", "B", "I"]
+
+[tool.mypy]
+files = ["app"]
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# -ra lists every skip and expected failure with its reason; --strict-markers refuses a misspelt marker.
+# pytest-randomly shuffles the order on every run (replay a run with --randomly-seed=<seed> or
+# --randomly-seed=last); pytest-timeout fails any test that runs past `timeout` seconds.
+addopts = "-m 'not live' -ra --strict-markers"
+timeout = 30
+xfail_strict = true
+# Unmarked tests are unit tests. Mark the others so the split can be counted (see tests.yml).
+markers = [
+    "integration: the project's own parts together, through an entry point (HTTP route, CLI, tool wrapper)",
+    "e2e: the real UI in a browser",
+    "live: calls a real service with real keys; skipped unless run with -m live",
+]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+# TEMPLATE: list the decision core here (the modules whose rules decide outcomes), and publish this figure under
+# that name ("decision core coverage"), never the total.
+include = ["*/app/core.py"]
+fail_under = 90
+show_missing = true
+
+[tool.codespell]
+skip = "*.png,*.jpg,*.gif,*.svg,*.lock,package-lock.json,.git,.venv,node_modules"

@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use Titra or its evaluation, please cite it as below."
+type: software
+title: "Titra: Open oxygen control for preterm babies on low-cost CPAP"
+abstract: >-
+  {{ABSTRACT}}
+authors:
+  - family-names: Donovici
+    given-names: Marc
+version: 1.0.0
+date-released: "{{RELEASE_DATE}}"
+license: MIT
+repository-code: "https://github.com/Marc-Dvci/Titra"
+url: "{{DEMO_URL}}"
+keywords:
+  - "{{KEYWORD}}"

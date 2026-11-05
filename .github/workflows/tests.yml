@@ -1,0 +1,83 @@
+# On every push: lint, format, types, tests with coverage of the decision core, spelling and local links (Python);
+# the web build when there is one; and the Docker image, started and asked for its health and its page.
+# Read-only: nothing here writes to the repository.
+name: tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy
+      - name: Tests in random order, with line and branch coverage of the decision core
+        shell: bash
+        run: python -m pytest -q --cov --randomly-seed="$GITHUB_RUN_ID" | tee pytest.log
+      - name: Summary on the run page
+        if: always()
+        shell: bash
+        run: |
+          count() { python -m pytest --collect-only -q -p no:randomly -m "$1" 2>/dev/null | tail -n 1 | grep -Eo '^[0-9]+' || echo 0; }
+          {
+            echo "### Tests"
+            echo
+            grep -E "passed|failed" pytest.log | tail -n 1
+            echo "Random order: replay it with \`python -m pytest --randomly-seed=$GITHUB_RUN_ID\`."
+            echo
+            echo "| Kind | Tests |"
+            echo "|---|---|"
+            echo "| Unit | $(count 'not integration and not e2e and not live') |"
+            echo "| Integration | $(count integration) |"
+            echo "| End-to-end | $(count e2e) |"
+            echo
+            echo "### Coverage of the decision core (lines and branches)"
+            echo
+            python -m coverage report --format=markdown
+          } >> "$GITHUB_STEP_SUMMARY"
+      - run: codespell
+      - run: python scripts/check_links.py
+      - run: python scripts/check_placeholders.py
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: has
+        run: echo "build=$([ -f web/package.json ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+      - if: steps.has.outputs.build == 'yes'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - if: steps.has.outputs.build == 'yes'
+        working-directory: web
+        run: |
+          npm ci
+          npx tsc -b
+          npx eslint src
+          npx vite build
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --target demo -t project:demo .
+      - run: docker run -d --name demo -p 127.0.0.1:8787:8787 project:demo
+      - name: The API and the web app answer
+        run: |
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:8787/api/health > /dev/null && break; sleep 2; done
+          curl -fs http://127.0.0.1:8787/api/health | grep -q '"demo":true'
+          curl -fs http://127.0.0.1:8787/ | grep -q '<title>'
+      - if: failure()
+        run: docker logs demo
