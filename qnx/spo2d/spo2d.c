@@ -105,12 +105,13 @@ static void usage(void) {
 int main(int argc, char **argv) {
     int cot = 0, baud = 115200, opt;
     const char *spec = NULL;
-    while ((opt = getopt(argc, argv, "n:d:b:p:")) != -1) {
+    while ((opt = getopt(argc, argv, "n:d:b:p:C:")) != -1) {
         switch (opt) {
             case 'n': cot = atoi(optarg); break;
             case 'd': spec = optarg; break;
             case 'b': baud = atoi(optarg); break;
             case 'p': g_prio = atoi(optarg); break;
+            case 'C': titra_set_process_cpus(atoi(optarg), 1); break;
             default: usage();
         }
     }

@@ -8,7 +8,10 @@
 # The rules Titra depends on:
 #   - titractlN_t may connect to spo2dN_t and valvedN_t of its own cot, and to nothing of another cot;
 #   - no other type may connect to any spo2dN_t or valvedN_t (station_t reads /dev/titra/cotN only);
-#   - qnx/image/check_policy.py checks both in CI.
+#   - advisor_t may read the controllers and ask the model, and connects to no driver;
+#   - llm_t, the language model, connects to nothing of Titra's, has no network and cannot start a program, and with
+#     procnto -P 22 it holds no way above priority 21, below the controllers at 30;
+#   - qnx/image/check_policy.py checks these in CI.
 
 # This represents a policy that should allow a system to perform all the
 # same actions as have been observed since the policy generator has been
@@ -22,6 +25,7 @@
 type default_rules;
 allow default_rules self:ability {};
 
+type advisor_t;
 type console_t;
 type default;
 type devb_t;
@@ -37,6 +41,8 @@ type fsevmgr_t;
 type fsevmgr_t__run;
 type ham_t;
 type ham_t__run;
+type llm_t;
+type llmstore_t;
 type io_sock_t;
 type io_sock_t__run;
 type io_usb_t;
@@ -63,6 +69,47 @@ type user_root_t;
 type valved1_t;
 type valved2_t;
 type valved3_t;
+
+# The advisor: reads every controller and asks the model. It has no path to a driver and no network.
+allow_attach advisor_t {
+    /dev/titra/advice
+};
+allow advisor_t self:ability {
+    pathspace
+    prot_exec
+    map_fixed
+    public_channel
+    channel_connect:devb_t,ham_t,titractl1_t,titractl2_t,titractl3_t,llm_t
+};
+
+# The language model: serves /dev/llm and reads its own binary. No path to any Titra process, no network, no spawn,
+# no privileged priority, no physical memory. It runs as user 300 after attaching.
+allow_attach llm_t {
+    /dev/llm
+};
+allow llm_t self:ability {
+    pathspace
+    prot_exec
+    map_fixed
+    public_channel
+    setuid:300
+    setgid:300
+    channel_connect:devb_t,ham_t
+};
+allow llm_t self:ability {
+    nonroot
+    prot_exec
+    map_fixed
+    channel_connect:devb_t
+};
+
+# The weights' keeper: reads the model volume, fills one shared memory object and exits.
+allow llmstore_t self:ability {
+    prot_exec
+    map_fixed
+    mem_phys:0-0xffffffffffff
+    channel_connect:devb_t
+};
 
 ability iofunc/dup allow { root };
 ability vfs/mount-blk allow { root };
@@ -97,9 +144,11 @@ allow_attach devb_t {
     /dev/hd0t177
     /dev/hd0t178
     /dev/hd0t179
+    /dev/hd1
     /boot
     /system
     /data
+    /models
 };
 allow devb_t self:ability {
     nonroot
@@ -125,6 +174,7 @@ allow_attach devb_t__run {
     /boot
     /system
     /data
+    /models
 };
 allow devb_t__run self:ability {
     nonroot
@@ -268,7 +318,7 @@ allow ham_t self:ability {
     map_fixed
     public_channel
     channel_connect:dumper_t,ham_t
-    settypeid:ham_t__run,spo2d1_t,valved1_t,titractl1_t,spo2d2_t,valved2_t,titractl2_t,spo2d3_t,valved3_t,titractl3_t,station_t
+    settypeid:ham_t__run,spo2d1_t,valved1_t,titractl1_t,spo2d2_t,valved2_t,titractl2_t,spo2d3_t,valved3_t,titractl3_t,station_t,advisor_t,llm_t
 };
 derive_type ham_t run ham_t__run;
 
@@ -278,7 +328,7 @@ allow ham_t__run self:ability {
     prot_exec
     priority:0-253
     map_fixed
-    settypeid:spo2d1_t,valved1_t,titractl1_t,spo2d2_t,valved2_t,titractl2_t,spo2d3_t,valved3_t,titractl3_t,station_t
+    settypeid:spo2d1_t,valved1_t,titractl1_t,spo2d2_t,valved2_t,titractl2_t,spo2d3_t,valved3_t,titractl3_t,station_t,advisor_t,llm_t
 };
 
 # === Rules for type io_sock_t ============
@@ -304,7 +354,7 @@ allow io_sock_t self:ability {
     getid
     pathspace
     rlimit:14
-    mem_phys:4273471488-4273475583
+    mem_phys:3221225472-4294967295
     mem_lock
     prot_exec
     interrupt:256-258
@@ -369,7 +419,7 @@ allow pci_server_t self:ability {
     nonroot
     pathspace
     rsrcdbmgr
-    mem_phys:0-4095,2147483648-2147487743,3758096384-3758100479,4026531840-4026535935,4273471488-4273475583
+    mem_phys:0-4095,2147483648-2147487743,3221225472-4294967295
     mem_peer:33
     mem_lock
     prot_exec
@@ -546,7 +596,7 @@ allow sshd_t__privsep self:ability {
 allow station_t self:ability {
     prot_exec
     map_fixed
-    channel_connect:io_sock_t,titractl1_t,titractl2_t,titractl3_t
+    channel_connect:io_sock_t,titractl1_t,titractl2_t,titractl3_t,advisor_t
     network/jailroot
 };
 
@@ -595,6 +645,8 @@ allow user_root_t self:ability {
     setuid:0
     setgid:0
     fork
+    prot_exec
+    map_fixed
     channel_connect:devb_t,io_sock_t
     network/jailroot
 };
@@ -602,11 +654,12 @@ allow user_root_t self:ability {
     setgid:0
     spawn
     prot_exec
+    signal
     pgrp
     map_fixed
-    xprocess_query:20-22,24-25,29-30,33-34,37-38,43-44,47-48
-    channel_connect:slogger_t,devb_t,pipe_t,titractl1_t,titractl2_t,titractl3_t
-    settypeid:titractl2_t,station_t
+    xprocess_query:20-22,24-25,29-30,33-34,37-38,43-44,47-48,300
+    channel_connect:slogger_t,devb_t,pipe_t,titractl1_t,titractl2_t,titractl3_t,advisor_t,llm_t
+    settypeid:titractl2_t,station_t,advisor_t,llm_t
 };
 
 # === Rules for type valved1_t ============

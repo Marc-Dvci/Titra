@@ -86,6 +86,9 @@ static inline double titra_now(void) {
 /* Sets the calling thread to SCHED_FIFO at `prio`. Returns 0 or an errno value. */
 int titra_set_priority(int prio);
 
+/* Keeps this process and every thread it creates on CPUs first to first + count - 1. Returns 0 or -1. */
+int titra_set_process_cpus(int first, int count);
+
 /* Writes this process's pid to /dev/shmem/titra-NAME-COT.pid, so the bench can find one cot's process. */
 void titra_write_pid(const char *name, int cot);
 

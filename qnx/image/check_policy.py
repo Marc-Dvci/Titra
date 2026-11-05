@@ -6,6 +6,11 @@ The rules checked, for every cot N:
   - only titractlN_t may connect to valvedN_t (the blender driver of cot N);
   - only titractlN_t may connect to spo2dN_t (the oximeter driver of cot N);
   - station_t may connect to no blender or oximeter driver.
+And for the language model:
+  - llm_t may connect to none of Titra's processes and not to the network;
+  - llm_t holds none of the abilities that could reach beyond its own process;
+  - advisor_t may connect only to the controllers and to llm_t among Titra's processes, and not to the network;
+  - only advisor_t and the root shell's type may connect to llm_t.
 Both rule forms count: "allow A B:channel connect;" and "channel_connect:B" inside "allow A self:ability {...}".
 Exit status 1 and one line per violation if a rule breaks the isolation.
 """
@@ -35,9 +40,57 @@ def connections(text: str) -> set[tuple[str, str]]:
     return pairs
 
 
+# Abilities that would take the model's process beyond itself.
+LLM_FORBIDDEN_ABILITIES = (
+    "spawn",
+    "fork",
+    "priority",
+    "mem_phys",
+    "io",
+    "interrupt",
+    "settypeid",
+    "xprocess_query",
+    "xprocess_debug",
+    "xprocess_mem_read",
+    "rlimit",
+    "able_create",
+    "reboot",
+)
+
+
+def abilities_of(text: str, type_name: str) -> set[str]:
+    """Every ability name the policy gives a type, without its range."""
+    text = re.sub(r"#[^\n]*", "", text)
+    names: set[str] = set()
+    for m in re.finditer(rf"allow\s+{re.escape(type_name)}\s+self\s*:\s*ability\s*\{{(.*?)\}}\s*;", text, re.S):
+        for word in m.group(1).split():
+            names.add(word.split(":")[0])
+    return names
+
+
+def model_violations(text: str, pairs: set[tuple[str, str]]) -> list[str]:
+    out = []
+    has_model = "llm_t" in {c for c, _ in pairs} or re.search(r"\btype\s+llm_t\s*;", text) is not None
+    if not has_model:
+        return out
+    titra = re.compile(r"(valved|spo2d|titractl)\d+_t|station_t|advisor_t")
+    for client, channel in sorted(pairs):
+        if client == "llm_t" and (titra.fullmatch(channel) or channel == "io_sock_t"):
+            out.append(f"llm_t may connect to {channel}")
+        if channel == "llm_t" and client not in ("advisor_t", "user_root_t"):
+            out.append(f"{client} may connect to llm_t")
+        if client == "advisor_t" and (
+            re.fullmatch(r"(valved|spo2d)\d+_t|station_t", channel) or channel == "io_sock_t"
+        ):
+            out.append(f"advisor_t may connect to {channel}")
+    for name in sorted(abilities_of(text, "llm_t") & set(LLM_FORBIDDEN_ABILITIES)):
+        out.append(f"llm_t holds the ability {name}")
+    return out
+
+
 def violations(text: str, cots: int = 3) -> list[str]:
     pairs = connections(text)
-    out = []
+    out = model_violations(text, pairs)
     for client, channel in sorted(pairs):
         m = re.fullmatch(r"(valved|spo2d)(\d+)_t", channel)
         if m and client != f"titractl{m.group(2)}_t":
@@ -54,7 +107,9 @@ def main() -> int:
     for p in problems:
         print(p)
     if not problems:
-        print(f"{path.name}: only each cot's own controller may reach that cot's drivers")
+        print(
+            f"{path.name}: only each cot's own controller may reach that cot's drivers, and the model reaches none of them"
+        )
     return 1 if problems else 0
 
 

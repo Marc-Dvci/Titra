@@ -9,9 +9,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <termios.h>
 #include <unistd.h>
+
+#define LINK_LIMIT_S 1
 
 void titra_link_init(titra_link_t *l, const char *spec, int baud) {
     memset(l, 0, sizeof(*l));
@@ -69,12 +73,36 @@ static int open_tcp(titra_link_t *l) {
     if (fd < 0) return -1;
     int one = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
-    if (connect(fd, (struct sockaddr *)&sa, sizeof sa) != 0) {
+    /* A converter that does not answer must not hold anyone for a TCP timeout: the connect and each write get 1 s. */
+    struct timeval limit = {LINK_LIMIT_S, 0};
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &limit, sizeof limit);
+    const int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    int rc = connect(fd, (struct sockaddr *)&sa, sizeof sa);
+    if (rc != 0 && errno == EINPROGRESS) {
+        fd_set w;
+        FD_ZERO(&w);
+        FD_SET(fd, &w);
+        struct timeval tv = {LINK_LIMIT_S, 0};
+        rc = select(fd + 1, NULL, &w, NULL, &tv);
+        if (rc == 1) {
+            int err = 0;
+            socklen_t len = sizeof err;
+            getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);
+            errno = err;
+            rc = err ? -1 : 0;
+        } else {
+            errno = ETIMEDOUT;
+            rc = -1;
+        }
+    }
+    if (rc != 0) {
         int e = errno;
         close(fd);
         errno = e;
         return -1;
     }
+    fcntl(fd, F_SETFL, flags);
     return fd;
 }
 

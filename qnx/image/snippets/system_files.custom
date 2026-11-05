@@ -6,6 +6,9 @@
 [uid=0 gid=0 perms=755] bin/station=__TITRA_BUILD__/station
 [uid=0 gid=0 perms=755] bin/ham=usr/sbin/ham
 [uid=0 gid=0 perms=755] bin/titra-burn=__TITRA_BUILD__/titra-burn
+[uid=0 gid=0 perms=755] bin/advisor=__TITRA_BUILD__/advisor
+[uid=0 gid=0 perms=755] bin/llmstore=__TITRA_BUILD__/llmstore
+[uid=0 gid=0 perms=755] bin/llm=__TITRA_BUILD__/llm
 lib/libham.so.2=usr/lib/libham.so.2
 # This OpenSSH runs a separate sshd-auth for each login; post_start.custom links it where sshd looks for it.
 [uid=0 gid=0 perms=755] bin/sshd-auth=usr/libexec/sshd-auth

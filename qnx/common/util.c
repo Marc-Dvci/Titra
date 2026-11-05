@@ -2,6 +2,9 @@
 #include <pthread.h>
 #include <sched.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <sys/neutrino.h>
+#include <sys/syspage.h>
 #include <unistd.h>
 
 #include "titra_qnx.h"
@@ -10,6 +13,23 @@ int titra_set_priority(int prio) {
     struct sched_param sp;
     sp.sched_priority = prio;
     return pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
+}
+
+int titra_set_process_cpus(int first, int count) {
+    const int ncpu = _syspage_ptr->num_cpu;
+    const int rsize = RMSK_SIZE(ncpu);
+    int *buf = calloc((size_t)(1 + rsize * 2), sizeof(int));
+    if (buf == NULL) return -1;
+    buf[0] = rsize;
+    unsigned *mask = (unsigned *)&buf[1];
+    unsigned *inherit = mask + rsize;
+    for (int c = first; c < first + count && c < ncpu; c++) {
+        RMSK_SET(c, mask);
+        RMSK_SET(c, inherit);
+    }
+    const int rc = ThreadCtl(_NTO_TCTL_RUNMASK_GET_AND_SET_INHERIT, buf);
+    free(buf);
+    return rc == -1 ? -1 : 0;
 }
 
 void titra_write_pid(const char *name, int cot) {

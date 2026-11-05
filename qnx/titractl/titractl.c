@@ -1,7 +1,7 @@
 /*
  * titractl: the controller for one cot.
  *
- *   titractl -n COT [-B BACKUP] [-m MIN] [-M MAX] [-p PRIORITY] [-H] [-T TYPE]
+ *   titractl -n COT [-B BACKUP] [-m MIN] [-M MAX] [-p PRIORITY] [-H] [-T TYPE] [-C CPU]
  *
  * A 1 Hz timer pulse drives each tick: ask the oximeter driver for its latest sample (devctl on /dev/spo2/COT),
  * run the controller (core/src/control.c), and send the command to the blender driver (devctl on /dev/valve/COT).
@@ -98,7 +98,7 @@ static int send_bad_commands(const char *valve_path, int count) {
 }
 
 static void usage(void) {
-    fprintf(stderr, "usage: titractl -n COT [-B BACKUP] [-m MIN] [-M MAX] [-p PRIORITY] [-H] [-T TYPE] [-X COUNT]\n");
+    fprintf(stderr, "usage: titractl -n COT [-B BACKUP] [-m MIN] [-M MAX] [-p PRIORITY] [-H] [-T TYPE] [-C CPU] [-X COUNT]\n");
     exit(2);
 }
 
@@ -106,7 +106,7 @@ int main(int argc, char **argv) {
     int cot = 0, prio = 30, use_ham = 0, opt, bad = 0;
     const char *type = NULL;
     tc_cot_settings_t settings = {0.21, 1.00, 0.30};
-    while ((opt = getopt(argc, argv, "n:B:m:M:p:HT:X:")) != -1) {
+    while ((opt = getopt(argc, argv, "n:B:m:M:p:HT:X:C:")) != -1) {
         switch (opt) {
             case 'n': cot = atoi(optarg); break;
             case 'B': settings.backup_fio2 = atof(optarg); break;
@@ -116,6 +116,7 @@ int main(int argc, char **argv) {
             case 'H': use_ham = 1; break;
             case 'T': type = optarg; break;
             case 'X': bad = atoi(optarg); break;
+            case 'C': titra_set_process_cpus(atoi(optarg), 1); break;
             default: usage();
         }
     }

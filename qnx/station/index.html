@@ -38,6 +38,18 @@
   .legend { display: flex; gap: 18px; padding: 10px 32px 0; color: var(--muted); font-size: 13px; }
   .legend i { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 6px; }
   .tir { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .advice { grid-column: 1 / -1; display: grid; grid-template-columns: 120px 1fr; gap: 24px; margin-top: -8px; font-size: 14px; }
+  .advice .order { color: var(--muted); font-size: 13px; }
+  .advice .action { font-weight: 500; }
+  .advice .why { color: var(--muted); }
+  .advice .flagged .action { color: var(--amber); }
+  .panel { padding: 16px 32px 4px; border-top: 1px solid var(--rule); }
+  .panel h2 { font-size: 15px; font-weight: 500; margin: 0 0 6px; }
+  .panel p { margin: 0 0 6px; font-size: 14px; color: var(--muted); }
+  .panel p b { color: var(--ink); font-weight: 500; }
+  button { font: inherit; font-size: 13px; color: var(--blue); background: none; border: 1px solid var(--rule); border-radius: 4px;
+           padding: 3px 10px; cursor: pointer; }
+  .model { font-size: 13px; color: var(--muted); padding: 10px 32px 16px; }
   footer { padding: 14px 32px; color: var(--muted); font-size: 13px; }
   @media (max-width: 900px) { .cot { grid-template-columns: 1fr 1fr; } svg { grid-column: 1 / -1; } }
 </style>
@@ -49,12 +61,56 @@
 </header>
 <div class="legend"><span><i style="background:#202124"></i>SpO2, 10 s mean</span><span><i style="background:#1a73e8"></i>FiO2</span><span><i style="background:#e6f4ea;height:10px"></i>Target 91-95%</span></div>
 <main id="cots" aria-live="polite"></main>
+<div class="model" id="model"></div>
+<section class="panel" aria-label="Shift handover"><h2>Shift handover <button id="handover">Write it now</button></h2><div id="handover-text"></div></section>
+<section class="panel" aria-label="System notes"><h2>System notes</h2><div id="incidents"></div></section>
 <footer id="foot">QNX 8.0</footer>
 <script>
 const ALARMS = {1: "SpO2 signal lost, FiO2 held", 2: "Fallback FiO2 applied", 4: "Oximeter data repeated or frozen",
   8: "SpO2 below 85%", 16: "SpO2 below 80%", 32: "SpO2 above 98% on oxygen", 64: "FiO2 at its upper limit"};
 const MODES = {control: "Control", hold: "Hold", fallback: "Fallback"};
 let history = {};
+let advice = {};
+const ORDER = ["First", "Second", "Third", "Fourth"];
+
+function esc(t) { return String(t).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c])); }
+
+function adviceRow(cot) {
+  const notes = advice.watch && advice.watch.notes ? advice.watch.notes : [];
+  const i = notes.findIndex(n => n.cot === cot);
+  if (i < 0) return "";
+  const n = notes[i], flagged = n.action !== "no action needed";
+  return `<div class="advice ${flagged ? "flagged" : ""}"><div class="order">${ORDER[i] || ""}</div>
+    <div><span class="action">${esc(n.action[0].toUpperCase() + n.action.slice(1))}.</span> <span class="why">${esc(n.why)}${riskText(cot)}</span></div></div>`;
+}
+
+function riskText(cot) {
+  const f = (advice.flags || []).find(x => x.cot === cot);
+  return f && f.risk >= 0 ? ` Chance of a dip in 10 minutes: ${f.risk}%.` : "";
+}
+
+function modelLine() {
+  if (!advice.watch) return "Advisor starting.";
+  const w = advice.watch, source = w.source === "model"
+    ? `Written by the on-board model and checked against the facts: ${w.loops} loop${w.loops === 1 ? "" : "s"}, ${w.tokens} tokens, ${(w.total_ms / 1000).toFixed(0)} s`
+    : "Deterministic flags" + (advice.model === "unavailable" ? ": the model is unavailable" : "");
+  const age = w.age_s >= 0 ? ` · ${Math.round(w.age_s / 60)} min ago` : "";
+  return `${source}${age}. Advice only: this software has no path to any blender.`;
+}
+
+function renderAdvice() {
+  document.getElementById("model").textContent = modelLine();
+  const h = advice.handover;
+  const state = h ? h.state : "none";
+  document.getElementById("handover").disabled = state === "running";
+  document.getElementById("handover").textContent = state === "running" ? "Writing" : "Write it now";
+  document.getElementById("handover-text").innerHTML = h && h.notes && h.notes.length && state === "done"
+    ? h.notes.map(n => `<p><b>Cot ${n.cot}.</b> ${esc(n.why)}</p>`).join("") : "";
+  const inc = advice.incidents || [];
+  document.getElementById("incidents").innerHTML = inc.length
+    ? inc.slice(0, 4).map(e => `<p><b>Cot ${e.cot}, ${Math.round(e.age_s / 60)} min ago.</b> ${esc(e.note)}</p>`).join("")
+    : "<p>Nothing to report.</p>";
+}
 
 function inTarget(spo2, fio2) { return fio2 <= 0.211 ? spo2 >= 91 : spo2 >= 91 && spo2 <= 95; }
 
@@ -119,6 +175,7 @@ function row(c) {
     <div>${trend(pts)}<div class="tir">${timeInTarget(pts)}</div></div>
     <div class="state"><span class="chip ${c.mode}">${MODES[c.mode] || c.mode}</span>
       <div class="alarm ${level}">${alarmText(c)}</div></div>
+    ${adviceRow(c.cot)}
   </section>`;
 }
 
@@ -143,9 +200,21 @@ async function refreshHistory() {
   } catch (e) { /* the next poll retries */ }
 }
 
-refreshHistory(); refresh();
+async function refreshAdvice() {
+  try {
+    advice = await (await fetch("/api/advice", {cache: "no-store"})).json();
+    renderAdvice();
+  } catch (e) { /* the next poll retries */ }
+}
+
+document.getElementById("handover").addEventListener("click", () => {
+  fetch("/api/handover", {method: "POST"}).then(refreshAdvice);
+});
+
+refreshHistory(); refresh(); refreshAdvice();
 setInterval(refresh, 1000);
 setInterval(refreshHistory, 5000);
+setInterval(refreshAdvice, 2000);
 </script>
 </body>
 </html>

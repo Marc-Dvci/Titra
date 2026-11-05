@@ -11,6 +11,11 @@
  *   GET /              the nurse view
  *   GET /api/cots      the latest status of every cot
  *   GET /api/history   the last hour of SpO2, FiO2, mode and alarm for every cot
+ *   GET /api/advice    what the advisor publishes at /dev/titra/advice
+ *   POST /api/handover ask the advisor for a shift handover
+ *   POST /api/note?cot=N&text=...  store a nurse's note on a cot, which the advisor treats as data
+ *
+ * The station reads advice and shows it. It has no way to act on it: its type reaches no driver.
  */
 #include <arpa/inet.h>
 #include <errno.h>
@@ -25,11 +30,13 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "advisor_proto.h"
 #include "page.h"
 #include "titra_qnx.h"
 
 #define MAX_COTS 8
 #define HISTORY 3600
+#define ADVICE_MAX 16384
 
 typedef struct {
     float t, spo2, fio2;
@@ -84,6 +91,71 @@ static void *poller(void *arg) {
         }
     }
     return NULL;
+}
+
+static char g_advice[ADVICE_MAX] = "{\"model\":\"unavailable\",\"offline\":1}";
+
+/* Reads the advisor's line every two seconds. With no advisor the page says so, and the cots carry on. */
+static void *advice_poller(void *arg) {
+    (void)arg;
+    static char line[ADVICE_MAX];
+    struct timespec two = {2, 0};
+    for (;;) {
+        nanosleep(&two, NULL);
+        size_t have = 0;
+        int fd = open("/dev/titra/advice", O_RDONLY);
+        if (fd >= 0) {
+            for (;;) {
+                const ssize_t n = read(fd, line + have, sizeof line - 1 - have);
+                if (n <= 0) break;
+                have += (size_t)n;
+                if (have >= sizeof line - 1) break;
+            }
+            close(fd);
+        }
+        line[have] = '\0';
+        pthread_mutex_lock(&g_mtx);
+        if (have > 0) {
+            memcpy(g_advice, line, have + 1);
+        } else {
+            snprintf(g_advice, sizeof g_advice, "{\"model\":\"unavailable\",\"offline\":1}");
+        }
+        pthread_mutex_unlock(&g_mtx);
+    }
+    return NULL;
+}
+
+/* Asks the advisor something over a devctl. Returns 0, or an errno value. */
+static int ask_advisor(unsigned dcmd, void *data, size_t size) {
+    int fd = open("/dev/titra/advice", O_RDWR);
+    if (fd < 0) return errno;
+    const int rc = devctl(fd, (int)dcmd, data, size, NULL);
+    close(fd);
+    return rc;
+}
+
+/* Decodes a URL query value into out. Stops at & or the end of the text. */
+static void url_value(const char *query, const char *key, char *out, size_t cap) {
+    out[0] = '\0';
+    const size_t klen = strlen(key);
+    for (const char *p = query; p != NULL && *p; p = strchr(p, '&') ? strchr(p, '&') + 1 : NULL) {
+        if (strncmp(p, key, klen) == 0 && p[klen] == '=') {
+            size_t n = 0;
+            for (const char *s = p + klen + 1; *s && *s != '&' && n + 1 < cap; s++) {
+                if (*s == '+') {
+                    out[n++] = ' ';
+                } else if (*s == '%' && s[1] && s[2]) {
+                    const char hex[3] = {s[1], s[2], 0};
+                    out[n++] = (char)strtol(hex, NULL, 16);
+                    s += 2;
+                } else {
+                    out[n++] = *s;
+                }
+            }
+            out[n] = '\0';
+            return;
+        }
+    }
 }
 
 typedef struct {
@@ -165,8 +237,33 @@ static void serve(int fd) {
     if (n <= 0) return;
     req[n] = '\0';
     char method[8], path[128];
-    if (sscanf(req, "%7s %127s", method, path) != 2 || strcmp(method, "GET") != 0) {
-        reply(fd, "405 Method Not Allowed", "text/plain", "GET only\n", 9);
+    char path_long[512];
+    if (sscanf(req, "%7s %511s", method, path_long) != 2) {
+        reply(fd, "400 Bad Request", "text/plain", "bad request\n", 12);
+        return;
+    }
+    snprintf(path, sizeof path, "%.*s", (int)sizeof path - 1, path_long);
+    if (strcmp(method, "POST") == 0) {
+        if (strcmp(path, "/api/handover") == 0) {
+            const int rc = ask_advisor(DCMD_ADVICE_HANDOVER, NULL, 0);
+            reply(fd, rc == EOK ? "202 Accepted" : "503 Service Unavailable", "text/plain", "\n", 1);
+        } else if (strncmp(path_long, "/api/note?", 10) == 0) {
+            char cot[8], text[160];
+            url_value(path_long + 10, "cot", cot, sizeof cot);
+            url_value(path_long + 10, "text", text, sizeof text);
+            advice_note_t note;
+            memset(&note, 0, sizeof note);
+            note.cot = atoi(cot);
+            snprintf(note.text, sizeof note.text, "%.119s", text);
+            const int rc = ask_advisor(DCMD_ADVICE_NOTE, &note, sizeof note);
+            reply(fd, rc == EOK ? "202 Accepted" : "400 Bad Request", "text/plain", "\n", 1);
+        } else {
+            reply(fd, "404 Not Found", "text/plain", "not found\n", 10);
+        }
+        return;
+    }
+    if (strcmp(method, "GET") != 0) {
+        reply(fd, "405 Method Not Allowed", "text/plain", "GET or POST only\n", 17);
         return;
     }
     if (strcmp(path, "/") == 0 || strcmp(path, "/index.html") == 0) {
@@ -180,6 +277,11 @@ static void serve(int fd) {
         reply(fd, "200 OK", "application/json", b.buf, b.len);
     } else if (strcmp(path, "/api/history") == 0) {
         history_json(&b);
+        reply(fd, "200 OK", "application/json", b.buf, b.len);
+    } else if (strcmp(path, "/api/advice") == 0) {
+        pthread_mutex_lock(&g_mtx);
+        put(&b, "%s", g_advice);
+        pthread_mutex_unlock(&g_mtx);
         reply(fd, "200 OK", "application/json", b.buf, b.len);
     } else {
         reply(fd, "404 Not Found", "text/plain", "not found\n", 10);
@@ -229,6 +331,7 @@ int main(int argc, char **argv) {
     g_start = titra_now();
     pthread_t tid;
     pthread_create(&tid, NULL, poller, NULL);
+    pthread_create(&tid, NULL, advice_poller, NULL);
 
     int s = socket(AF_INET, SOCK_STREAM, 0);
     int one = 1;

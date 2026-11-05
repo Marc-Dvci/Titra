@@ -44,7 +44,15 @@ static double g_blender_rx = -1.0;
 static double g_start;
 static int g_prio = 30;
 
-/* Sends one $BL frame with the FiO2 the watchdog says to apply. Caller holds g_mtx. */
+/* The newest frame waits here for the sender thread. Each frame carries the whole command, so a newer one replaces an
+ * older one that was not sent yet. */
+static char g_out[TC_LINE_MAX + 1];
+static size_t g_out_len;
+static int g_out_ready;
+static pthread_cond_t g_out_cond = PTHREAD_COND_INITIALIZER;
+
+/* Queues one $BL frame with the FiO2 the watchdog says to apply. Caller holds g_mtx. The link is opened and written by
+ * the sender thread alone: a controller's message holds g_mtx, and it must never wait for the network. */
 static void send_frame_locked(double now) {
     int pm;
     int state = tc_linkwd_tick(&g_wd, now, &pm);
@@ -60,9 +68,28 @@ static void send_frame_locked(double now) {
     char buf[TC_LINE_MAX + 1];
     size_t n = tc_bl_format(buf, sizeof buf, &f);
     if (n == 0) return;
-    pthread_mutex_lock(&g_tx);
-    if (titra_link_open(&g_link) == 0) titra_link_write(&g_link, buf, n);
-    pthread_mutex_unlock(&g_tx);
+    memcpy(g_out, buf, n);
+    g_out_len = n;
+    g_out_ready = 1;
+    pthread_cond_signal(&g_out_cond);
+}
+
+static void *sender(void *arg) {
+    (void)arg;
+    titra_set_priority(g_prio);
+    char buf[TC_LINE_MAX + 1];
+    for (;;) {
+        pthread_mutex_lock(&g_mtx);
+        while (!g_out_ready) pthread_cond_wait(&g_out_cond, &g_mtx);
+        const size_t n = g_out_len;
+        memcpy(buf, g_out, n);
+        g_out_ready = 0;
+        pthread_mutex_unlock(&g_mtx);
+        pthread_mutex_lock(&g_tx);
+        if (titra_link_open(&g_link) == 0) titra_link_write(&g_link, buf, n);
+        pthread_mutex_unlock(&g_tx);
+    }
+    return NULL;
 }
 
 static int on_devctl(unsigned dcmd, void *data, size_t in_bytes, size_t cap, size_t *out_bytes) {
@@ -184,7 +211,7 @@ int main(int argc, char **argv) {
     int cot = 0, baud = 115200, opt;
     double backup = 0.30, lo = 0.21, hi = 1.00;
     const char *spec = NULL;
-    while ((opt = getopt(argc, argv, "n:d:B:m:M:b:p:")) != -1) {
+    while ((opt = getopt(argc, argv, "n:d:B:m:M:b:p:C:")) != -1) {
         switch (opt) {
             case 'n': cot = atoi(optarg); break;
             case 'd': spec = optarg; break;
@@ -193,6 +220,7 @@ int main(int argc, char **argv) {
             case 'M': hi = atof(optarg); break;
             case 'b': baud = atoi(optarg); break;
             case 'p': g_prio = atoi(optarg); break;
+            case 'C': titra_set_process_cpus(atoi(optarg), 1); break;
             default: usage();
         }
     }
@@ -217,8 +245,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "valved: cannot attach %s: %s\n", path, strerror(errno));
         return 1;
     }
-    pthread_t t1, t2;
-    if (pthread_create(&t1, NULL, ticker, NULL) != 0 || pthread_create(&t2, NULL, reader, NULL) != 0) {
+    pthread_t t1, t2, t3;
+    if (pthread_create(&t1, NULL, ticker, NULL) != 0 || pthread_create(&t2, NULL, reader, NULL) != 0 ||
+        pthread_create(&t3, NULL, sender, NULL) != 0) {
         fprintf(stderr, "valved: cannot start threads: %s\n", strerror(errno));
         return 1;
     }

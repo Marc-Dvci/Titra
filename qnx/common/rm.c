@@ -18,6 +18,7 @@ struct _iofunc_ocb;
 #include "titra_qnx.h"
 
 #define MSG_MAX 2048
+#define TEXT_MAX 16384
 
 typedef struct {
     char path[64];
@@ -36,7 +37,7 @@ static int io_read(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
     int status = iofunc_read_verify(ctp, msg, ocb, NULL);
     if (status != EOK) return status;
     if ((msg->i.xtype & _IO_XTYPE_MASK) != _IO_XTYPE_NONE) return ENOSYS;
-    char text[1024];
+    char text[TEXT_MAX];
     rm_t *rm = rm_of(ocb);
     int len = rm->text_fn ? rm->text_fn(text, sizeof text) : 0;
     if (len < 0) len = 0;

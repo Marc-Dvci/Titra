@@ -8,3 +8,7 @@ START_P(ham_t) /system/bin/ham
 waitfor /proc/ham 10
 echo "---> Starting Titra"
 /system/bin/titra-launch -c 3 -h 10.0.2.2 -P 5551 -B 0.30 -S SUBST_P(-T)
+# The advisor comes up after the cots and apart from them. The model volume is the second disk; without it the advisor
+# runs on its deterministic flags alone.
+if [ -e /dev/hd1 ]; then mount -r -t qnx6 /dev/hd1 /models; fi
+/system/bin/titra-launch -A -c 3 SUBST_P(-T) &
