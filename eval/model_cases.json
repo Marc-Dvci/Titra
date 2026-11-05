@@ -1,0 +1,29 @@
+{
+  "description": "The case windows for the on-board model, committed before any model output is scored. A case is a ward of three cots at one moment: each cot is a family, a seed and an end time under Titra's controller, and its facts are the C core's over window_s. The wards mix states so the ranking means something, and the all-stable ward is the healthy control. Prompts and grammars are adjusted on the development seeds only; the held-out seeds run once per configuration. Everything here is simulated.",
+  "window_s": 10800,
+  "wards": [
+    ["stable", "worsening", "artefact_heavy"],
+    ["moderate", "improving", "unstable"],
+    ["stable", "stable", "stable"]
+  ],
+  "end_s": [10800, 14400],
+  "seeds": {"development": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], "held_out": [1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009]},
+  "handover_wards": [["moderate", "worsening", "artefact_heavy"]],
+  "handover_window_s": 14400,
+  "flag_words": {
+    "rising_need": ["ris", "increas", "climb", "up from", "higher", "more oxygen", " to 0."],
+    "wean_opportunity": ["wean", "fell", "fall", "falling", "drop", "decreas", "less oxygen", "lower", "down"],
+    "frequent_desaturations": ["dip", "desat", "episode", "below 85"],
+    "probe_trouble": ["probe", "signal", "sensor", "reading"],
+    "hold_or_fallback": ["hold", "held", "fallback"],
+    "high_need": ["high", "fio2"],
+    "system_restart": ["restart", "system"]
+  },
+  "configurations": [
+    {"label": "dory_1_loop", "min_loops": 1, "max_loops": 1, "deadline_ms": 0},
+    {"label": "dory_2_loops", "min_loops": 2, "max_loops": 2, "deadline_ms": 0},
+    {"label": "dory_4_loops", "min_loops": 4, "max_loops": 4, "deadline_ms": 0},
+    {"label": "dory_elastic_30s", "min_loops": 1, "max_loops": 4, "deadline_ms": 30000},
+    {"label": "dory_elastic_120s", "min_loops": 1, "max_loops": 4, "deadline_ms": 120000}
+  ]
+}
