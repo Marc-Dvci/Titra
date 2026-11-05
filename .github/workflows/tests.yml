@@ -68,6 +68,21 @@ jobs:
             echo "### Coverage of the bench (lines and branches)"
             echo
             python -m coverage report --format=markdown
+            echo
+            echo "### Fault matrix on QNX (committed results, eval/results/faults.json)"
+            echo
+            python scripts/fault_table.py
+            echo
+            echo "### Time in target on simulated preterm babies (eval/results)"
+            echo
+            python - <<'EOF'
+          import json
+          d, h = (json.load(open(f"eval/results/{s}.json"))["mean"] for s in ("development", "held_out"))
+          print("| Controller | Development, 60 runs | Held-out, 60 runs |")
+          print("|---|---|---|")
+          for c, name in (("titra", "Titra"), ("fixed", "Fixed FiO2"), ("manual", "Manual-care model")):
+              print(f"| {name} | {d[c]['all']['time_in_target_pct']:.1f}% | {h[c]['all']['time_in_target_pct']:.1f}% |")
+          EOF
           } >> "$GITHUB_STEP_SUMMARY"
       - run: codespell
       - run: python scripts/check_links.py

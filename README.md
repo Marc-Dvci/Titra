@@ -6,6 +6,9 @@ safe oxygen range and puts each cot in a defined safe state when a sensor, a cab
 [![Tests](https://github.com/Marc-Dvci/Titra/actions/workflows/tests.yml/badge.svg)](https://github.com/Marc-Dvci/Titra/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![QNX 8.0](https://img.shields.io/badge/QNX-8.0-1a73e8)](qnx/)
+[![Faults on QNX: 14 of 14 within budget](https://img.shields.io/badge/faults%20on%20QNX-14%20of%2014-188038)](#fault-matrix-on-qnx)
+[![Tests: 79 C and 173 Python](https://img.shields.io/badge/tests-79%20C%20%C2%B7%20173%20Python-188038)](#claims)
+[![Bench coverage: 95%](https://img.shields.io/badge/bench%20coverage-95%25-188038)](pyproject.toml)
 
 ![The nurse station served by the QNX board: three cots, each with SpO2, FiO2, a 15-minute trend against the 91-95%
 target band, and the controller's mode](docs/station.png)
@@ -17,17 +20,31 @@ preterm babies on CPAP receive their oxygen.
 |---|---|---|
 | Robotics & Medical | QNX SDP 8.0 (QEMU x86_64), C11, Python | 14 of 14 injected faults within budget on QNX with the security policy enforced; 89.4% time in target against 64.8% for fixed FiO2 on held-out simulated babies |
 
-[For judges](#for-judges) · [The problem](#the-problem) · [How it works](#how-it-works) · [QNX](#how-qnx-is-used) ·
-[Results](#results) · [Run it](#run-it) · [Claims](#claims)
+[For judges](#for-judges) · [See it work](#see-it-work) · [The problem](#the-problem) · [How it works](#how-it-works) ·
+[QNX](#how-qnx-is-used) · [Results](#results) · [Run it](#run-it) · [Claims](#claims)
+
+> [!TIP]
+> The controller runs without QNX: `make -C core test`, then `pip install -r requirements-dev.txt` and
+> `python -m bench sim unstable 0` simulate four hours of an unstable baby in under a second. Full steps:
+> [Run it](#run-it).
 
 ## For judges
 
-| Criterion | Where it is answered |
-|---|---|
-| Technological implementation | [How QNX is used](#how-qnx-is-used), [`qnx/`](qnx/), [`core/`](core/), [fault matrix](#fault-matrix-on-qnx) |
-| Design | [The nurse station](#the-nurse-station), [safety layers](docs/SPEC.md#safety-layers) |
-| Potential impact | [The problem](#the-problem), [closed-loop results](#closed-loop-on-simulated-preterm-babies) |
-| Innovation | [Why a real-time OS](#why-a-real-time-os), [per-cot security types](#how-qnx-is-used) |
+| Criterion | Where it is answered | Code at the submitted tag |
+|---|---|---|
+| Technological implementation | [How QNX is used](#how-qnx-is-used), [fault matrix](#fault-matrix-on-qnx) | [resource manager](https://github.com/Marc-Dvci/Titra/blob/v1.0.0/qnx/common/rm.c#L90-L115), [1 Hz pulse and devctl to both drivers](https://github.com/Marc-Dvci/Titra/blob/v1.0.0/qnx/titractl/titractl.c#L184-L225), [HAM restarts](https://github.com/Marc-Dvci/Titra/blob/v1.0.0/qnx/launch/titra-launch.c#L70-L82), [HAM heartbeat](https://github.com/Marc-Dvci/Titra/blob/v1.0.0/qnx/titractl/titractl.c#L156-L177) |
+| Design | [See it work](#see-it-work), [the nurse station](#the-nurse-station), [safety layers](docs/SPEC.md#safety-layers) | [control step](https://github.com/Marc-Dvci/Titra/blob/v1.0.0/core/src/control.c#L153-L237), [station page](https://github.com/Marc-Dvci/Titra/blob/v1.0.0/qnx/station/index.html) |
+| Potential impact | [The problem](#the-problem), [closed-loop results](#closed-loop-on-simulated-preterm-babies) | [held-out results](https://github.com/Marc-Dvci/Titra/blob/v1.0.0/eval/results/held_out.json), [fault results](https://github.com/Marc-Dvci/Titra/blob/v1.0.0/eval/results/faults.json) |
+| Innovation | [Why a real-time OS](#why-a-real-time-os), [per-cot security types](#how-qnx-is-used) | [policy for cot 2's controller](https://github.com/Marc-Dvci/Titra/blob/v1.0.0/qnx/image/titra.secpol#L566-L578), [policy for the station](https://github.com/Marc-Dvci/Titra/blob/v1.0.0/qnx/image/titra.secpol#L545-L551), [fault runner](https://github.com/Marc-Dvci/Titra/blob/v1.0.0/bench/live.py#L223-L348) |
+
+## See it work
+
+![Cot 2's probe comes off: its SpO2 shows two dashes, the cot holds FiO2 at 0.22 and raises the alarm, and 30
+seconds later it moves to the fallback FiO2 of 0.30, while cots 1 and 3 stay in control](docs/probe-fault.gif)
+
+Cot 2's probe comes off during the final fault run. The cot holds its oxygen and alarms within a second, and 29
+seconds after the probe came off it moves to the fallback, while cots 1 and 3 keep their own control. These are the nurse station's own frames,
+recorded from the QNX board every 2 seconds and played at 4x speed.
 
 ## The problem
 
@@ -139,6 +156,10 @@ The gains were tuned on the development seeds only ([`bench/tune.py`](bench/tune
 tests of Salverda et al. (SpO2 held at 80% and at 98%), the largest FiO2 change in any minute is 0.090 up and 0.100
 down; six commercial devices range from 0.062 to 0.30 up[^2].
 
+Reproduce: `python -m bench evaluate development`, `python -m bench evaluate held_out` and `python -m bench steps`.
+Results: [`eval/results/development.json`](eval/results/development.json),
+[`eval/results/held_out.json`](eval/results/held_out.json).
+
 > [!IMPORTANT]
 > What is real and what is simulated: the QNX processes, drivers, resource managers, restarts and security policy run
 > on QNX 8.0 in QEMU. The baby, the oximeter and the blender are simulated on the host
@@ -188,9 +209,11 @@ Then open http://127.0.0.1:8080 for the nurse station.
 | Only each cot's controller may reach that cot's drivers under the committed policy | [`qnx/image/titra.secpol`](qnx/image/titra.secpol) | [`tests/test_policy.py`](tests/test_policy.py) |
 | The spec's figures match their published abstracts and the case set | [`eval/reference.json`](eval/reference.json) | [`tests/test_eval_cases.py`](tests/test_eval_cases.py) |
 
-Tests: `make -C core test` runs 79 C tests; `python -m pytest --cov` runs 173 Python tests in a new random order each
-time, each within 30 seconds. Coverage of the C core by gcov: 94 to 100% of lines and 82 to 98% of branches per file
-(`make -C core coverage`). CI runs both on every push.
+Tests: `make -C core test` runs 79 C tests; `python -m pytest --cov` runs 173 Python tests (153 unit, 20
+integration) in a new random order each time, each within 30 seconds, with no network and no keys. Coverage of the C
+core by gcov: 94 to 100% of lines and 82 to 98% of branches per file (`make -C core coverage`). Coverage of the bench
+by coverage.py: 95% of lines and branches; the code that drives the QNX guest over ssh runs only against the guest and
+is excluded, as set in [`pyproject.toml`](pyproject.toml). CI runs both on every push.
 
 ## Layout
 
