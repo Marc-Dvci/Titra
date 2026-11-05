@@ -242,6 +242,7 @@ int main(int argc, char **argv) {
         g_status.sample_status = sample ? sample->status : -1;
         g_status.valve_link = valve_ok;
         g_status.blender_pm = valve_ok ? vm.state.blender_pm : -1;
+        g_status.blender_link = valve_ok ? vm.state.blender_link_up : 0;
         g_status.fallback_fio2 = out.fallback_fio2;
         g_status.ticks++;
         pthread_mutex_unlock(&g_mtx);

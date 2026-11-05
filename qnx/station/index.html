@@ -22,7 +22,7 @@
          padding: 20px 0; border-bottom: 1px solid var(--rule); }
   .name { font-size: 18px; font-weight: 500; }
   .name small { display: block; color: var(--muted); font-size: 13px; font-weight: 400; }
-  .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; }
+  .label { color: var(--muted); font-size: 13px; letter-spacing: 0.2px; }
   .big { font-size: 44px; font-weight: 400; font-variant-numeric: tabular-nums; line-height: 1.05; }
   .big.in { color: var(--green); } .big.out { color: var(--ink); } .big.none { color: var(--muted); }
   .fio2 { font-size: 26px; font-variant-numeric: tabular-nums; color: var(--blue); }
@@ -33,7 +33,10 @@
   .chip.fallback, .chip.offline { background: var(--red-bg); color: var(--red); }
   .alarm { margin-top: 6px; font-size: 13px; color: var(--muted); min-height: 18px; }
   .alarm.medium { color: var(--amber); } .alarm.high { color: var(--red); font-weight: 500; }
-  svg { width: 100%; height: 78px; display: block; }
+  svg { width: 100%; height: 84px; display: block; }
+  .axis { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
+  .legend { display: flex; gap: 18px; padding: 10px 32px 0; color: var(--muted); font-size: 13px; }
+  .legend i { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 6px; }
   .tir { font-size: 13px; color: var(--muted); margin-top: 4px; }
   footer { padding: 14px 32px; color: var(--muted); font-size: 13px; }
   @media (max-width: 900px) { .cot { grid-template-columns: 1fr 1fr; } svg { grid-column: 1 / -1; } }
@@ -44,6 +47,7 @@
   <h1>Titra</h1><span class="sub">Nurse station</span>
   <span class="clock" id="clock"></span>
 </header>
+<div class="legend"><span><i style="background:#202124"></i>SpO2, 10 s mean</span><span><i style="background:#1a73e8"></i>FiO2</span><span><i style="background:#e6f4ea;height:10px"></i>Target 91-95%</span></div>
 <main id="cots" aria-live="polite"></main>
 <footer id="foot">QNX 8.0</footer>
 <script>
@@ -57,33 +61,46 @@ function inTarget(spo2, fio2) { return fio2 <= 0.211 ? spo2 >= 91 : spo2 >= 91 &
 function alarmText(c) {
   const list = Object.entries(ALARMS).filter(([bit]) => c.alarms & bit).map(([, t]) => t);
   if (c.valve_link === 0) list.push("Blender driver not answering");
+  else if (c.blender_link === 0) list.push("Blender not answering its driver");
   return list.join(" · ");
 }
 
 function trend(points) {
-  const W = 600, H = 78, span = 900;
+  const W = 600, H = 84, span = 900, bin = 10;
   if (!points || !points.length) return `<svg viewBox="0 0 ${W} ${H}"></svg>`;
   const t1 = points[points.length - 1][0], t0 = t1 - span;
   const x = t => ((t - t0) / span) * W;
   const ys = v => H - 4 - ((Math.max(70, Math.min(100, v)) - 70) / 30) * (H - 8);
   const yf = v => H - 4 - (Math.min(1, v) - 0.21) / 0.79 * (H - 8);
-  const band = `<rect x="0" y="${ys(95)}" width="${W}" height="${ys(91) - ys(95)}" fill="#e6f4ea"/>`;
-  let s = "", f = "";
-  for (const [t, spo2, fio2] of points) {
-    if (t < t0) continue;
-    if (spo2 >= 0) s += `${s ? "L" : "M"}${x(t).toFixed(1)},${ys(spo2).toFixed(1)}`;
-    if (fio2 >= 0) f += `${f ? "L" : "M"}${x(t).toFixed(1)},${yf(fio2).toFixed(1)}`;
+  // 10-second means of valid SpO2 readings, so the trend shows the baby rather than the noise of one reading.
+  const bins = new Map();
+  for (const [t, spo2] of points) {
+    if (t < t0 || spo2 < 0) continue;
+    const k = Math.floor(t / bin);
+    const b = bins.get(k) || [0, 0]; b[0] += spo2; b[1] += 1; bins.set(k, b);
   }
+  let s = "", f = "", prev = null;
+  for (const [k, [sum, n]] of [...bins.entries()].sort((a, b) => a[0] - b[0])) {
+    const tx = x((k + 0.5) * bin);
+    s += `${prev !== null && k === prev + 1 ? "L" : "M"}${tx.toFixed(1)},${ys(sum / n).toFixed(1)}`;
+    prev = k;
+  }
+  for (const [t, , fio2] of points) {
+    if (t < t0 || fio2 < 0) continue;
+    f += `${f ? "L" : "M"}${x(t).toFixed(1)},${yf(fio2).toFixed(1)}`;
+  }
+  const band = `<rect x="0" y="${ys(95)}" width="${W}" height="${ys(91) - ys(95)}" fill="#e6f4ea"/>`;
   return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
     aria-label="SpO2 and FiO2, last 15 minutes">${band}
-    <path d="${f}" fill="none" stroke="#1a73e8" stroke-width="1.5" opacity="0.8"/>
-    <path d="${s}" fill="none" stroke="#202124" stroke-width="1.6"/></svg>`;
+    <path d="${f}" fill="none" stroke="#1a73e8" stroke-width="1.6" vector-effect="non-scaling-stroke"/>
+    <path d="${s}" fill="none" stroke="#202124" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>
+    <div class="axis"><span>15 min ago</span><span>now</span></div>`;
 }
 
 function timeInTarget(points) {
   let n = 0, k = 0;
   for (const [, spo2, fio2] of points || []) if (spo2 >= 0) { n++; if (inTarget(spo2, fio2)) k++; }
-  return n ? Math.round(100 * k / n) + "% in target" : "";
+  return n ? Math.round(100 * k / n) + "% in target, last hour" : "";
 }
 
 function row(c) {

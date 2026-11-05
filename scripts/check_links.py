@@ -3,7 +3,7 @@
     python scripts/check_links.py
 
 Offline and deterministic, so it runs in CI. External links are checked in a browser before submitting.
-Links that still hold a {{PLACEHOLDER}} are left to scripts/check_placeholders.py.
+Links that still hold a placeholder are left to scripts/check_placeholders.py.
 """
 
 from __future__ import annotations

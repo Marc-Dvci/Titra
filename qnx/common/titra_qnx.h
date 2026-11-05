@@ -63,6 +63,7 @@ typedef struct {
     int sample_status; /* tc_sample_status_t, or -1 */
     int blender_pm;
     int valve_link;    /* the blender driver answered on the last tick */
+    int blender_link;  /* the blender driver hears from the blender (a status frame in the last 3 s) */
     double fallback_fio2;
     double backup_fio2;
     uint32_t ticks;

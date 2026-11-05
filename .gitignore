@@ -26,3 +26,5 @@ data/runs/
 core/build/
 qnx/build/
 qnx/station/page.h
+data/film/
+data/gallery/

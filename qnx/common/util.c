@@ -24,10 +24,10 @@ void titra_write_pid(const char *name, int cot) {
 int titra_cot_json(const titra_cot_status_t *s, char *buf, int cap) {
     return snprintf(buf, (size_t)cap,
                     "{\"cot\":%d,\"t\":%.3f,\"fio2\":%.2f,\"mode\":\"%s\",\"alarm\":%d,\"alarms\":%u,\"reasons\":%u,"
-                    "\"spo2\":%d,\"pr\":%d,\"sample\":%d,\"blender\":%.3f,\"valve_link\":%d,\"fallback\":%.2f,"
+                    "\"spo2\":%d,\"pr\":%d,\"sample\":%d,\"blender\":%.3f,\"valve_link\":%d,\"blender_link\":%d,\"fallback\":%.2f,"
                     "\"backup\":%.2f,\"ticks\":%u,\"late_ticks\":%u,\"max_interval\":%.3f,\"started\":%.3f}\n",
                     s->cot, s->t, s->fio2, tc_mode_name(s->mode), s->alarm, (unsigned)s->alarms,
-                    (unsigned)s->reasons, s->spo2, s->pr, s->sample_status, s->blender_pm / 1000.0, s->valve_link,
+                    (unsigned)s->reasons, s->spo2, s->pr, s->sample_status, s->blender_pm / 1000.0, s->valve_link, s->blender_link,
                     s->fallback_fio2, s->backup_fio2, (unsigned)s->ticks, (unsigned)s->late_ticks, s->max_interval_s,
                     s->started_s);
 }

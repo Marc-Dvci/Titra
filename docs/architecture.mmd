@@ -1,6 +1,20 @@
 %% Source of docs/architecture.png, the diagram in the README. Rebuild: python scripts/render_diagram.py
-%% TEMPLATE: replace with the project's own flow; mark where models read and where code decides.
 flowchart TD
-    A["Input<br/>what the user gives"] --> B["Model step<br/>reads, locates, phrases"]
-    B --> C{{"Decision<br/>fixed rules, app/core.py"}}
-    C --> D["Output<br/>with the evidence it rests on"]
+    subgraph HOST["Host"]
+        OX["Simulated baby<br/>and oximeter"]
+        BL["Simulated blender<br/>own watchdog"]
+    end
+    subgraph QNX["QNX 8.0 guest"]
+        SPO2["spo2d · spo2dN_t<br/>/dev/spo2/N"]
+        CTL{{"titractl · titractlN_t<br/>1 Hz, priority 30"}}
+        VALVE["valved · valvedN_t<br/>/dev/valve/N"]
+        STATION["station · station_t<br/>nurse view"]
+        HAM["HAM: restarts<br/>and heartbeats"]
+    end
+    OX -- "$OX" --> SPO2
+    SPO2 -- "devctl" --> CTL
+    CTL -- "devctl" --> VALVE
+    VALVE -- "$BL" --> BL
+    CTL -. "status" .-> STATION
+    CTL -. "heartbeat" .-> HAM
+    STATION -- "refused by policy" --x VALVE

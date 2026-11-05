@@ -7,9 +7,9 @@ others under control.
 
 ## Who it is for
 
-A night-shift nurse in a neonatal unit with several babies on bubble CPAP and one pair of hands. At 03:10 she is
+A night-shift nurse in a neonatal unit with several babies on bubble CPAP and one pair of hands. At 03:10 the nurse is
 feeding the baby in cot 1 when the oximeter probe slips off the foot of the baby in cot 2. Under manual control, the
-oxygen setting in cot 2 stays wherever it was until she notices. Under Titra, cot 2 holds its last setting and raises
+oxygen setting in cot 2 stays wherever it was until someone notices. Under Titra, cot 2 holds its last setting and raises
 an alarm at the cot. If the probe is not back within 30 seconds, it moves to a fallback setting that never sits below
 the baby's recent need. Cots 1 and 3 keep their own control throughout.
 

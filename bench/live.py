@@ -23,14 +23,16 @@ from typing import Any
 from bench.blender import Blender
 from bench.frames import FrameError, LineSplitter, parse_bl, parse_ox
 from bench.metrics import in_target
-from bench.oximeter import Oximeter
+from bench.oximeter import Oximeter, OximeterParams
 from bench.patient import Patient
 from bench.scenario import draw
 
 ROOT = Path(__file__).resolve().parents[1]
 FAULTS = ROOT / "eval" / "fault_matrix.json"
 PORT_BASE = 5551
-SCENARIOS = {1: ("moderate", 0), 2: ("moderate", 1), 3: ("unstable", 0)}
+SCENARIOS = {1: ("moderate", 0), 2: ("stable", 0), 3: ("unstable", 0)}
+# The cot under test: its oximeter has no natural artefact or sensor-off episodes, so every alarm on it is the fault's.
+FAULT_COT = 2
 
 
 @dataclass
@@ -56,9 +58,7 @@ class Recorder:
 
     def since(self, t: float, cot: int | None = None, kind: str | None = None) -> list[Event]:
         return [
-            e
-            for e in self.events
-            if e.t >= t and (cot is None or e.cot == cot) and (kind is None or e.kind == kind)
+            e for e in self.events if e.t >= t and (cot is None or e.cot == cot) and (kind is None or e.kind == kind)
         ]
 
 
@@ -119,7 +119,8 @@ class CotTwin:
         self.cot = cot
         self.rec = rec
         self.patient = Patient(self.scn.patient, self.scn.rng("patient"), self.scn.initial_fio2)
-        self.ox = Oximeter(self.scn.rng("oximeter"), self.scn.oximeter)
+        ox_params = OximeterParams(0.0, 0.0, 0.0) if cot == FAULT_COT else self.scn.oximeter
+        self.ox = Oximeter(self.scn.rng("oximeter"), ox_params)
         self.blender = Blender(backup_fio2=self.scn.settings.backup_fio2, fio2=self.scn.initial_fio2)
         self.splitter = LineSplitter()
         port = PORT_BASE + 2 * (cot - 1)
@@ -209,6 +210,16 @@ def last_fio2_before(rec: Recorder, cot: int, t: float) -> float | None:
     return float(frames[-1].data["fio2"]) if frames else None
 
 
+async def wait_quiet(rec: Recorder, cot: int, quiet_s: float = 5.0, limit_s: float = 180.0) -> None:
+    """Waits until the cot's frames have carried no alarm for quiet_s, so a fault starts from a calm cot."""
+    start = rec.now()
+    while rec.now() - start < limit_s:
+        recent = [e for e in rec.since(rec.now() - quiet_s, cot, "bl")]
+        if recent and all(e.data["alarm"] == 0 for e in recent):
+            return
+        await asyncio.sleep(1.0)
+
+
 async def run_case(case: dict[str, Any], cots: dict[int, CotTwin], rec: Recorder, guest: Guest) -> dict[str, Any]:
     cid, fault, cot = case["id"], case["fault"], int(case["cot"])
     twin = cots.get(cot)
@@ -216,8 +227,11 @@ async def run_case(case: dict[str, Any], cots: dict[int, CotTwin], rec: Recorder
     observe = max(120.0, duration + 60.0)
     result: dict[str, Any] = {"id": cid, "fault": fault, "cot": cot, "expect": case["expect"]}
     watch = [int(c) for c in case.get("watch_cots", [])]
-    before = {c: await guest.status(c) for c in (watch or ([cot] if cot else list(cots)))}
+    polled = sorted(set(watch) | {cot}) if cot else list(cots)
+    before = {c: await guest.status(c) for c in polled}
 
+    if cot:
+        await wait_quiet(rec, cot)
     t0 = rec.now()
     rec.add(cot, "fault_start", id=cid, fault=fault)
     fio2_before = last_fio2_before(rec, cot, t0) if cot else None
@@ -240,7 +254,9 @@ async def run_case(case: dict[str, Any], cots: dict[int, CotTwin], rec: Recorder
     elif fault == "stop_titractl":
         await guest.signal("titractl", cot, "STOP")
     elif fault == "bad_command":
-        rc, out = await guest.run(guest.typed(f"titractl{cot}_t", f"/system/bin/titractl -n {cot} -X {case['attempts']}"))
+        rc, out = await guest.run(
+            guest.typed(f"titractl{cot}_t", f"/system/bin/titractl -n {cot} -X {case['attempts']}")
+        )
         result["guest_output"] = out.strip()
     elif fault == "open_valve_from_other_type":
         rc, out = await guest.run(guest.typed("station_t", f"/system/bin/station -V {cot} -k {case['attempts']}"))
@@ -255,8 +271,8 @@ async def run_case(case: dict[str, Any], cots: dict[int, CotTwin], rec: Recorder
     elif duration and fault == "blender_link_cut":
         if cot == 2 and twin:
             await asyncio.sleep(10.0)
-            rc, out = await guest.run(f"cat /dev/valve/{cot}")
-            result["driver_state_during_cut"] = out.strip()
+            st = await guest.status(cot, timeout=10.0)
+            result["driver_sees_blender_during_cut"] = st.get("blender_link")
         await asyncio.sleep(max(duration - 10.0, 0.0))
         if twin:
             twin.bl_link.refusing = False
@@ -318,11 +334,13 @@ async def run_case(case: dict[str, Any], cots: dict[int, CotTwin], rec: Recorder
         except (ValueError, IndexError):
             pass
     if fault in ("cpu_load",) or watch:
+        counted = watch or list(before)
         late = {
-            c: int(after.get(c, {}).get("late_ticks", -1)) - int(before.get(c, {}).get("late_ticks", 0)) for c in before
+            c: int(after.get(c, {}).get("late_ticks", -1)) - int(before.get(c, {}).get("late_ticks", 0))
+            for c in counted
         }
         m["late_ticks"] = late
-        m["max_interval_s"] = {c: after.get(c, {}).get("max_interval") for c in before}
+        m["max_interval_s"] = {c: after.get(c, {}).get("max_interval") for c in counted}
     result["measured"] = m
     result["pass"] = judge(case["expect"], m)
     return result
@@ -402,6 +420,7 @@ async def main_async(a: argparse.Namespace) -> None:
     summary = {
         "target": "QNX 8.0 in QEMU (software emulation), x86_64, 4 CPUs",
         "clock": "host monotonic clock, outside the guest",
+        "monotonic_t0": rec.t0,
         "types": a.types,
         "warmup_s": a.warmup,
         "closed_loop_during_warmup": closed_loop(cots, 30.0, warm_end),
@@ -437,4 +456,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -1,6 +1,6 @@
 """Embeds the nurse view into a C header, so the station serves it from its own binary.
 
-    python3 station/embed.py station/index.html station/page.h
+python3 station/embed.py station/index.html station/page.h
 """
 
 import sys

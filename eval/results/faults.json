@@ -1,0 +1,279 @@
+{
+ "target": "QNX 8.0 in QEMU (software emulation), x86_64, 4 CPUs",
+ "clock": "host monotonic clock, outside the guest",
+ "monotonic_t0": 7915.301419255,
+ "types": true,
+ "warmup_s": 360.0,
+ "closed_loop_during_warmup": {
+  "1": {
+   "seconds_valid": 330,
+   "time_in_target_pct": 75.2,
+   "scenario": "moderate:0"
+  },
+  "2": {
+   "seconds_valid": 330,
+   "time_in_target_pct": 70.6,
+   "scenario": "stable:0"
+  },
+  "3": {
+   "seconds_valid": 316,
+   "time_in_target_pct": 89.2,
+   "scenario": "unstable:0"
+  }
+ },
+ "closed_loop_whole_session_undisturbed_cots": {
+  "1": {
+   "seconds_valid": 2608,
+   "time_in_target_pct": 85.3,
+   "scenario": "moderate:0"
+  },
+  "3": {
+   "seconds_valid": 2884,
+   "time_in_target_pct": 85.1,
+   "scenario": "unstable:0"
+  }
+ },
+ "cases": [
+  {
+   "id": "F1",
+   "fault": "sensor_off",
+   "cot": 2,
+   "expect": {
+    "alarm_within_s": 2,
+    "fio2_unchanged_while_holding": true,
+    "fallback_within_s": 32
+   },
+   "measured": {
+    "alarm_s": 0.61,
+    "fallback_s": 29.17,
+    "fallback_fio2": 0.3,
+    "fio2_before": 0.22,
+    "fio2_unchanged_while_holding": true
+   },
+   "pass": true
+  },
+  {
+   "id": "F2",
+   "fault": "cable_cut",
+   "cot": 2,
+   "expect": {
+    "alarm_within_s": 5,
+    "fio2_unchanged_while_holding": true,
+    "fallback_within_s": 32
+   },
+   "measured": {
+    "alarm_s": 3.59,
+    "fallback_s": 29.97,
+    "fallback_fio2": 0.3,
+    "fio2_before": 0.21,
+    "fio2_unchanged_while_holding": true
+   },
+   "pass": true
+  },
+  {
+   "id": "F3",
+   "fault": "repeat_frame",
+   "cot": 2,
+   "expect": {
+    "fallback_within_s": 5
+   },
+   "measured": {
+    "alarm_s": 1.95,
+    "fallback_s": 1.95,
+    "fallback_fio2": 0.3,
+    "fio2_before": 0.22,
+    "fio2_unchanged_while_holding": true
+   },
+   "pass": true
+  },
+  {
+   "id": "F4",
+   "fault": "frozen_values",
+   "cot": 2,
+   "expect": {
+    "fallback_within_s": 22
+   },
+   "measured": {
+    "alarm_s": 19.5,
+    "fallback_s": 19.5,
+    "fallback_fio2": 0.3,
+    "fio2_before": 0.22,
+    "fio2_unchanged_while_holding": true
+   },
+   "pass": true
+  },
+  {
+   "id": "F5",
+   "fault": "garbage_line",
+   "cot": 2,
+   "expect": {
+    "no_crash": true,
+    "no_fallback": true
+   },
+   "measured": {
+    "fallback_seen": false
+   },
+   "pass": true
+  },
+  {
+   "id": "F6",
+   "fault": "kill_spo2d",
+   "cot": 2,
+   "expect": {
+    "alarm_within_s": 2,
+    "resume_within_s": 10,
+    "no_fallback": true
+   },
+   "measured": {
+    "alarm_s": 0.63,
+    "fallback_seen": false,
+    "resume_s": 1.61
+   },
+   "pass": true
+  },
+  {
+   "id": "F7",
+   "fault": "kill_titractl",
+   "cot": 2,
+   "expect": {
+    "resume_within_s": 10,
+    "no_step_at_resume": true,
+    "alarm_if_gap_over_s": 3
+   },
+   "measured": {
+    "resume_s": 0.92,
+    "fio2_before": 0.22,
+    "fio2_at_resume": 0.22,
+    "step_at_resume": 0.0,
+    "gap_s": 0.92
+   },
+   "pass": true
+  },
+  {
+   "id": "F8",
+   "fault": "stop_titractl",
+   "cot": 2,
+   "expect": {
+    "alarm_within_s": 5,
+    "resume_within_s": 15
+   },
+   "measured": {
+    "alarm_s": 2.74,
+    "resume_s": 5.35,
+    "fio2_before": 0.22,
+    "fio2_at_resume": 0.22,
+    "step_at_resume": 0.0,
+    "gap_s": 5.35
+   },
+   "pass": true
+  },
+  {
+   "id": "F9",
+   "fault": "kill_valved",
+   "cot": 2,
+   "expect": {
+    "resume_within_s": 10,
+    "alarm_if_gap_over_s": 3
+   },
+   "measured": {
+    "gap_s": 1.9,
+    "resume_s": 1.87
+   },
+   "pass": true
+  },
+  {
+   "id": "F10",
+   "fault": "blender_link_cut",
+   "cot": 2,
+   "expect": {
+    "alarm_within_s": 5,
+    "fallback_within_s": 17
+   },
+   "driver_sees_blender_during_cut": 0,
+   "measured": {
+    "alarm_s": 3.12,
+    "fallback_s": 15.12,
+    "fallback_fio2": 0.3
+   },
+   "pass": true
+  },
+  {
+   "id": "F11",
+   "fault": "bad_command",
+   "cot": 2,
+   "expect": {
+    "refused_fraction": 1.0
+   },
+   "guest_output": "{\"attempts\":100,\"refused\":100,\"accepted\":0}",
+   "measured": {
+    "attempts": 100,
+    "refused": 100,
+    "refused_fraction": 1.0
+   },
+   "pass": true
+  },
+  {
+   "id": "F12",
+   "fault": "open_valve_from_other_type",
+   "cot": 1,
+   "expect": {
+    "refused_fraction": 1.0
+   },
+   "guest_output": "{\"path\":\"/dev/valve/1\",\"attempts\":100,\"refused\":100,\"opened\":0,\"other\":0,\"errno\":\"Operation not permitted\"}",
+   "measured": {
+    "alarm_s": 19.3,
+    "attempts": 100,
+    "refused": 100,
+    "refused_fraction": 1.0
+   },
+   "pass": true
+  },
+  {
+   "id": "F13",
+   "fault": "cpu_load",
+   "cot": 0,
+   "expect": {
+    "missed_ticks": 0
+   },
+   "measured": {
+    "late_ticks": {
+     "1": 0,
+     "2": 0,
+     "3": 0
+    },
+    "max_interval_s": {
+     "1": 1.006,
+     "2": 1.005,
+     "3": 1.066
+    }
+   },
+   "pass": true
+  },
+  {
+   "id": "F14",
+   "fault": "kill_titractl",
+   "cot": 2,
+   "expect": {
+    "missed_ticks_on_watched_cots": 0
+   },
+   "measured": {
+    "resume_s": 0.94,
+    "fio2_before": 0.23,
+    "fio2_at_resume": 0.23,
+    "step_at_resume": 0.0,
+    "gap_s": 0.94,
+    "late_ticks": {
+     "1": 0,
+     "3": 0
+    },
+    "max_interval_s": {
+     "1": 1.006,
+     "3": 1.066
+    }
+   },
+   "pass": true
+  }
+ ],
+ "passed": 14,
+ "total": 14
+}
