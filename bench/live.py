@@ -1,6 +1,7 @@
 """The live bench: the twin of docs/MODEL.md in real time against Titra on QNX, and the fault matrix.
 
     python -m bench.live [--cots 3] [--warmup 360] [--cases F1,F2,...] [--types] [--out eval/results/faults.json]
+                         [--ssh PATH] [--ssh-key FILE] [--target TEXT]
 
 For each cot the bench listens on two TCP ports, the oximeter's and the blender's (5551 + 2(N-1) and the next one),
 as serial-to-Ethernet converter ports would. The QNX drivers connect to them from the guest (10.0.2.2 is this host).
@@ -71,9 +72,16 @@ class Link:
         self.on_connect = on_connect
         self.writer: asyncio.StreamWriter | None = None
         self.refusing = False
+        self.server: asyncio.Server | None = None
 
     async def start(self) -> None:
-        await asyncio.start_server(self._client, "0.0.0.0", self.port)
+        self.server = await asyncio.start_server(self._client, "0.0.0.0", self.port)
+
+    async def stop_listening(self) -> None:
+        """Closes the port itself, as a converter that has lost power: connection attempts are refused."""
+        if self.server is not None:
+            self.server.close()
+            self.server = None
 
     async def _client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         if self.refusing:
@@ -166,14 +174,18 @@ class CotTwin:
 class Guest:
     """Commands on the QNX guest over ssh."""
 
-    def __init__(self, port: int = 2222, types: bool = False) -> None:
+    def __init__(self, port: int = 2222, types: bool = False, ssh: str = "ssh", key: str | None = None) -> None:
         self.port = port
         self.types = types
+        self.ssh = ssh
+        self.key = key
 
     async def run(self, cmd: str, timeout: float = 60.0) -> tuple[int, str]:
+        identity = ["-i", self.key] if self.key else []
         args = [
-            "ssh", "-p", str(self.port), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=20", "root@127.0.0.1", cmd,
+            self.ssh, *identity, "-p", str(self.port), "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=20",
+            "root@127.0.0.1", cmd,
         ]  # fmt: skip
         proc = await asyncio.create_subprocess_exec(
             *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
@@ -193,7 +205,10 @@ class Guest:
         return rc
 
     async def status(self, cot: int, timeout: float = 60.0) -> dict[str, Any]:
-        rc, out = await self.run(f"cat /dev/titra/cot{cot}", timeout=timeout)
+        return await self.json_line(f"cat /dev/titra/cot{cot}", timeout)
+
+    async def json_line(self, cmd: str, timeout: float = 60.0) -> dict[str, Any]:
+        rc, out = await self.run(cmd, timeout=timeout)
         try:
             data: dict[str, Any] = json.loads(out.strip().splitlines()[-1])
             return data
@@ -244,6 +259,36 @@ async def run_case(case: dict[str, Any], cots: dict[int, CotTwin], rec: Recorder
             await asyncio.sleep(0.5)
 
     poller = asyncio.ensure_future(poll_status()) if fault in ("kill_titractl", "stop_titractl") else None
+    llm_seen: dict[str, Any] = {}
+    if fault in ("kill_llm", "stop_llm"):
+        first_status = await guest.json_line("cat /dev/llm", timeout=10.0)
+        t0 = rec.now()
+        await guest.signal("llm", 0, "KILL" if fault == "kill_llm" else "STOP")
+        llm_seen = await watch_model_restart(guest, rec, t0, first_status.get("pid"))
+    elif fault == "blender_link_refused" and twin:
+        await twin.bl_link.stop_listening()
+        twin.bl_link.drop()
+        await asyncio.sleep(duration)
+        await twin.bl_link.start()
+    elif fault == "open_valve_from_advisor":
+        rc, out = await guest.run(guest.typed("advisor_t", f"/system/bin/advisor -V {cot} -k {case['attempts']}"))
+        result["guest_output"] = out.strip()
+    elif fault == "model_escape":
+        rc, out = await guest.run(guest.typed("llm_t", "/system/bin/llm -E -m /dev/shmem/dory.gguf"), timeout=120.0)
+        result["guest_output"] = out.strip()
+    elif fault == "model_saturated":
+        cmd = guest.typed("advisor_t", f"/system/bin/advisor -S {int(duration)}")
+        rc, out = await guest.run(cmd, timeout=duration + 120.0)
+        result["guest_output"] = out.strip()
+    elif fault == "injection_and_malformed_output":
+        rc, out = await guest.run(guest.typed("advisor_t", "/system/bin/advisor -J"), timeout=300.0)
+        result["guest_output"] = out.strip()
+    elif fault == "urgent_during_long_request":
+        rc, out = await guest.run(guest.typed("advisor_t", "/system/bin/advisor -U"), timeout=300.0)
+        result["guest_output"] = out.strip()
+    elif fault == "high_priority_client":
+        rc, out = await guest.run(guest.typed("advisor_t", "/system/bin/advisor -Q"), timeout=60.0)
+        result["guest_output"] = out.strip()
     if fault in ("sensor_off", "cable_cut", "repeat_frame", "frozen_values", "garbage_line") and twin:
         twin.ox.force(fault)
     elif fault == "blender_link_cut" and twin:
@@ -325,7 +370,13 @@ async def run_case(case: dict[str, Any], cots: dict[int, CotTwin], rec: Recorder
             gap, back = max(gaps)
             m["gap_s"] = round(gap, 2)
             m["resume_s"] = round(back - t0, 2)
-    if fault in ("bad_command", "open_valve_from_other_type") and result.get("guest_output"):
+    if llm_seen:
+        m.update(llm_seen)
+    m.update(model_measures(fault, result.get("guest_output", "")))
+    if fault == "blender_link_refused" and blender_fb:
+        m["fallback_s"] = round(blender_fb.t - t0, 2)
+        m["fallback_fio2"] = blender_fb.data["fio2"]
+    if fault in ("bad_command", "open_valve_from_other_type", "open_valve_from_advisor") and result.get("guest_output"):
         try:
             out = json.loads(result["guest_output"].splitlines()[-1])
             m["attempts"] = out.get("attempts")
@@ -344,6 +395,68 @@ async def run_case(case: dict[str, Any], cots: dict[int, CotTwin], rec: Recorder
     result["measured"] = m
     result["pass"] = judge(case["expect"], m)
     return result
+
+
+async def watch_model_restart(
+    guest: Guest, rec: Recorder, t0: float, old_pid: Any, limit_s: float = 60.0
+) -> dict[str, Any]:
+    """Polls the model and the advice from outside the guest until a new process says it is ready."""
+    unavailable_at: float | None = None
+    while rec.now() - t0 < limit_s:
+        advice = await guest.json_line("cat /dev/titra/advice", timeout=5.0)
+        if advice.get("model") == "unavailable" and unavailable_at is None:
+            unavailable_at = rec.now()
+        st = await guest.json_line("cat /dev/llm", timeout=5.0)
+        if st.get("state") == "ready" and st.get("pid") != old_pid:
+            out: dict[str, Any] = {
+                "resume_s": round(rec.now() - t0, 2),
+                "model_ready_after_ms": st.get("ready_after_ms"),
+                "advice_unavailable_seen": unavailable_at is not None,
+            }
+            if unavailable_at is not None:
+                out["advice_unavailable_s"] = round(unavailable_at - t0, 2)
+            return out
+        await asyncio.sleep(0.2)
+    return {"advice_unavailable_seen": unavailable_at is not None}
+
+
+def model_measures(fault: str, output: str) -> dict[str, Any]:
+    """What the on-board measuring modes report, from their JSON lines."""
+    lines: list[dict[str, Any]] = []
+    for text in output.splitlines():
+        try:
+            lines.append(json.loads(text))
+        except ValueError:
+            continue
+    m: dict[str, Any] = {}
+    if fault == "model_escape":
+        tried = [x for x in lines if "attempt" in x]
+        attempts = sum(int(x["attempts"]) for x in tried)
+        refused = sum(int(x["refused"]) for x in tried)
+        m["attempts"] = attempts
+        m["refused"] = refused
+        m["refused_fraction"] = refused / max(attempts, 1)
+        m["by_attempt"] = {x["attempt"]: x["errno"] for x in tried}
+    elif fault == "model_saturated" and lines:
+        m["model_generated_tokens"] = lines[-1].get("tokens", 0)
+        m["model_requests"] = lines[-1].get("requests", 0)
+    elif fault == "injection_and_malformed_output" and lines:
+        last = lines[-1]
+        m["attempts"] = last.get("attempts")
+        m["refused"] = last.get("refused")
+        m["refused_fraction"] = (last.get("refused") or 0) / max(last.get("attempts") or 1, 1)
+        m["answer_contains_the_setting"] = last.get("answer_contains_the_setting")
+        m["injected_answer_passed_the_validator"] = last.get("injected_answer_passed")
+    elif fault == "urgent_during_long_request" and lines:
+        last = lines[-1]
+        m.update(
+            {k: last[k] for k in ("urgent_total_ms", "urgent_tokens", "urgent_validator", "long_total_ms") if k in last}
+        )
+        m["urgent_deadline_met"] = bool(last.get("urgent_deadline_met"))
+        m["long_preempted"] = last.get("long_preempted", 0)
+    elif fault == "high_priority_client" and lines:
+        m.update(lines[-1])
+    return m
 
 
 def judge(expect: dict[str, Any], m: dict[str, Any]) -> bool:
@@ -368,6 +481,16 @@ def judge(expect: dict[str, Any], m: dict[str, Any]) -> bool:
             ok &= m.get("gap_s", budget + 1) <= budget or "alarm_s" in m
         elif key in ("missed_ticks", "missed_ticks_on_watched_cots"):
             ok &= all(v == 0 for v in m.get("late_ticks", {0: -1}).values())
+        elif key == "advice_unavailable_seen":
+            ok &= bool(m.get("advice_unavailable_seen"))
+        elif key == "model_generated_tokens":
+            ok &= m.get("model_generated_tokens", 0) >= budget
+        elif key == "urgent_deadline_met":
+            ok &= bool(m.get("urgent_deadline_met"))
+        elif key == "long_preempted":
+            ok &= m.get("long_preempted", 0) > 0
+        elif key == "receive_priority":
+            ok &= m.get("receive_priority") == budget
         elif key == "no_crash":
             continue
     return ok
@@ -390,7 +513,7 @@ async def main_async(a: argparse.Namespace) -> None:
     cots = {n: CotTwin(n, rec) for n in range(1, a.cots + 1)}
     for twin in cots.values():
         await twin.start()
-    guest = Guest(types=a.types)
+    guest = Guest(types=a.types, ssh=a.ssh, key=a.ssh_key)
 
     async def ticker() -> None:
         nxt = time.monotonic()
@@ -418,7 +541,7 @@ async def main_async(a: argparse.Namespace) -> None:
         await asyncio.sleep(a.gap)
     tick_task.cancel()
     summary = {
-        "target": "QNX 8.0 in QEMU (software emulation), x86_64, 4 CPUs",
+        "target": a.target,
         "clock": "host monotonic clock, outside the guest",
         "monotonic_t0": rec.t0,
         "types": a.types,
@@ -450,6 +573,9 @@ def main() -> None:
     ap.add_argument("--cases", help="comma-separated case ids, default all")
     ap.add_argument("--types", action="store_true", help="the guest runs under the security policy (on -T)")
     ap.add_argument("--out", default=str(ROOT / "eval" / "results" / "faults.json"))
+    ap.add_argument("--ssh", default="ssh", help="the ssh client to use")
+    ap.add_argument("--ssh-key", help="the key for the guest's root user")
+    ap.add_argument("--target", default="QNX 8.0 in QEMU with hardware acceleration, x86_64, 4 CPUs")
     a = ap.parse_args()
     asyncio.run(main_async(a))
 

@@ -58,3 +58,59 @@ def test_committed_policy_isolates_every_cot() -> None:
     if not policy.exists():
         pytest.skip("reason: the policy is generated on the QNX target and committed after review")
     assert check_policy.violations(policy.read_text(encoding="utf-8")) == []
+
+
+MODEL = (
+    GOOD
+    + """
+type advisor_t; type llm_t;
+allow advisor_t self:ability { channel_connect:titractl1_t,llm_t,devb_t };
+allow llm_t self:ability { pathspace prot_exec channel_connect:devb_t,ham_t };
+"""
+)
+
+
+def test_the_model_and_the_advisor_with_their_own_rules_pass() -> None:
+    assert check_policy.violations(MODEL, cots=1) == []
+
+
+@pytest.mark.parametrize(
+    "rule, expected",
+    [
+        ("allow llm_t self:ability { channel_connect:valved1_t };", "llm_t may connect to valved1_t"),
+        ("allow llm_t self:ability { channel_connect:spo2d1_t };", "llm_t may connect to spo2d1_t"),
+        ("allow llm_t self:ability { channel_connect:titractl1_t };", "llm_t may connect to titractl1_t"),
+        ("allow llm_t self:ability { channel_connect:station_t };", "llm_t may connect to station_t"),
+        ("allow llm_t self:ability { channel_connect:advisor_t };", "llm_t may connect to advisor_t"),
+        ("allow llm_t self:ability { channel_connect:io_sock_t };", "llm_t may connect to io_sock_t"),
+        ("allow advisor_t self:ability { channel_connect:valved1_t };", "advisor_t may connect to valved1_t"),
+        ("allow advisor_t self:ability { channel_connect:io_sock_t };", "advisor_t may connect to io_sock_t"),
+        ("allow station_t self:ability { channel_connect:llm_t };", "station_t may connect to llm_t"),
+    ],
+)
+def test_a_path_out_of_the_model_or_the_advisor_is_a_violation(rule: str, expected: str) -> None:
+    assert expected in check_policy.violations(MODEL + rule, cots=1)
+
+
+@pytest.mark.parametrize(
+    "ability, name",
+    [
+        ("spawn", "spawn"),
+        ("priority:0-253", "priority"),
+        ("mem_phys:0-4095", "mem_phys"),
+        ("io:1", "io"),
+        ("settypeid:titractl1_t", "settypeid"),
+        ("rlimit:6", "rlimit"),
+    ],
+)
+def test_an_ability_beyond_its_own_process_is_a_violation(ability: str, name: str) -> None:
+    rule = f"allow llm_t self:ability {{ {ability} }};"
+    assert f"llm_t holds the ability {name}" in check_policy.violations(MODEL + rule, cots=1)
+
+
+def test_the_committed_policy_contains_the_model() -> None:
+    text = (ROOT / "qnx" / "image" / "titra.secpol").read_text(encoding="utf-8")
+    assert "type llm_t;" in text
+    assert "type advisor_t;" in text
+    assert check_policy.violations(text) == []
+    assert "channel_connect" in check_policy.abilities_of(text, "llm_t")

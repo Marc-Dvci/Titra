@@ -38,7 +38,7 @@ branch = true
 omit = ["*/bench/tune.py", "*/bench/__main__.py"]
 exclude_also = [
     'class Guest:',
-    'async def (wait_quiet|run_case|main_async)\(',
+    'async def (wait_quiet|run_case|main_async|watch_model_restart)\(',
     'def main\(\) -> None:',
 ]
 fail_under = 90

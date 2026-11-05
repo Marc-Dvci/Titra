@@ -13,9 +13,9 @@ def load(name: str) -> dict:  # type: ignore[type-arg]
     return data
 
 
-def test_fault_matrix_has_the_fourteen_cases_of_the_spec() -> None:
+def test_fault_matrix_has_the_cases_of_the_spec() -> None:
     cases = load("fault_matrix.json")["cases"]
-    assert [c["id"] for c in cases] == [f"F{i}" for i in range(1, 15)]
+    assert [c["id"] for c in cases] == [f"F{i}" for i in range(1, 24)]
     for c in cases:
         assert f"| {c['id']} |" in SPEC
 
