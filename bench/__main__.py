@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
 from pathlib import Path
 
-from bench import evaluate
+from bench import evaluate, flags
 from bench.scenario import draw, families
 from bench.simrun import CONTROLLERS, run
 from bench.steptest import run_all
@@ -30,6 +31,8 @@ def main(argv: list[str] | None = None) -> int:
     e = sub.add_parser("evaluate", help="every family, seed and controller of a seed set")
     e.add_argument("set", choices=("development", "held_out"))
     e.add_argument("--workers", type=int)
+    g = sub.add_parser("flags", help="score the advisor's flags on a seed set")
+    g.add_argument("set", choices=("development", "held_out"))
     a = ap.parse_args(argv)
 
     if a.cmd == "sim":
@@ -60,6 +63,9 @@ def main(argv: list[str] | None = None) -> int:
                 f"{st.id} {st.name} (SpO2 {st.spo2}%): {st.commanded_per_min:.3f} FiO2/min commanded, "
                 f"{st.circuit_per_min:.3f} in the circuit"
             )
+    elif a.cmd == "flags":
+        result = flags.write_results(a.set)
+        print(json.dumps(result["summary"], indent=1))
     else:
         evaluate.main(a.set, a.workers)
     return 0
