@@ -1,0 +1,13 @@
+Cot 3, last 180 minutes: time in target 88 percent; 9 desaturation episodes; longest 20 seconds; FiO2 from 0.28 to 0.29; 41 probe-off events; 11 percent no valid reading; 885 seconds in hold; 329 seconds in fallback; 4 percent above 95 on oxygen; 2 percent below 85; 59 percent chance of a dip.
+Flags: frequent desaturations, probe trouble, hold or fallback.
+Allowed actions: review respiratory support; check the probe site; check the system.
+
+Cot 2, last 180 minutes: time in target 91 percent; 6 desaturation episodes; longest 16 seconds; FiO2 from 0.24 to 0.27; 5 probe-off events; 1 percent no valid reading; 101 seconds in hold; 3 percent above 95 on oxygen; 1 percent below 85; 34 percent chance of a dip.
+Flags: rising need, frequent desaturations.
+Allowed actions: review respiratory support.
+
+Cot 1, last 180 minutes: time in target 95 percent; 1 desaturation episode; longest 12 seconds; FiO2 from 0.22 to 0.22; 8 probe-off events; 2 percent no valid reading; 153 seconds in hold; 25 seconds in fallback; 3 percent above 95 on oxygen; 8 percent chance of a dip.
+Flags: none.
+Allowed actions: nothing flagged.
+
+The cots above are in the order the rules give. Keep that order unless a fact gives a clear reason to change it. List the cots in the order the nurse should go to them, as JSON: {"notes":[{"cot":N,"action":"...","why":"one sentence of at most 12 words"}]}

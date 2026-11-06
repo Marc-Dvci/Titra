@@ -1,0 +1,19 @@
+{
+ "notes": [
+  {
+   "cot": 3,
+   "action": "review respiratory support",
+   "why": "frequent desaturations and probe trouble mean the nurse should review respiratory support and check the probe site."
+  },
+  {
+   "cot": 2,
+   "action": "review respiratory support",
+   "why": "rising need and frequent desaturations mean the nurse should review respiratory support."
+  },
+  {
+   "cot": 1,
+   "action": "nothing flagged",
+   "why": "Time in target 95 percent."
+  }
+ ]
+}
