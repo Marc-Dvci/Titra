@@ -5,6 +5,7 @@ oxygen range, puts each cot in a defined safe state when a sensor, a cable or it
 language model beside them that the kernel keeps away from every valve.**
 
 [![Tests](https://github.com/Marc-Dvci/Titra/actions/workflows/tests.yml/badge.svg)](https://github.com/Marc-Dvci/Titra/actions/workflows/tests.yml)
+[![CodeQL](https://github.com/Marc-Dvci/Titra/actions/workflows/codeql.yml/badge.svg)](https://github.com/Marc-Dvci/Titra/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![QNX 8.0](https://img.shields.io/badge/QNX-8.0-1a73e8)](qnx/)
 [![Faults on QNX: 23 of 23 within budget](https://img.shields.io/badge/faults%20on%20QNX-23%20of%2023-188038)](#fault-matrix-on-qnx)
