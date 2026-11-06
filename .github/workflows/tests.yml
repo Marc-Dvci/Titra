@@ -83,6 +83,24 @@ jobs:
           for c, name in (("titra", "Titra"), ("fixed", "Fixed FiO2"), ("manual", "Manual-care model")):
               print(f"| {name} | {d[c]['all']['time_in_target_pct']:.1f}% | {h[c]['all']['time_in_target_pct']:.1f}% |")
           EOF
+            echo
+            echo "### The advisor on held-out seeds (recorded answers scored again by the C validator)"
+            echo
+            python - <<'EOF'
+          import json
+          from pathlib import Path
+          from bench.model_eval import read_windows, score_file
+          windows = read_windows(Path("eval/model_windows_held_out.txt"))
+          print("| Loops | Valid answers | Flags spoken to | First cot equals the rules' first |")
+          print("|---|---|---|---|")
+          for loops in (1, 2, 4):
+              s = score_file(Path(f"eval/results/model_outputs_held_out_L{loops}.jsonl"), windows)
+              print(f"| {loops} | {s['valid']} of {s['answers']} | {s['flags_covered']} of {s['flags_raised']} | {100 * s['first_is_top_priority_rate']:.1f}% |")
+          r = json.load(open("eval/results/risk_held_out.json"))["scorers"]
+          best = max(v["auroc"] for k, v in r.items() if k != "model")
+          print()
+          print(f"Forecast AUROC {r['model']['auroc']:.3f} against {best:.3f} for the best rule.")
+          EOF
           } >> "$GITHUB_STEP_SUMMARY"
       - run: codespell
       - run: python scripts/check_links.py

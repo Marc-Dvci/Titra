@@ -2,6 +2,6 @@
 *.sh text eol=lf
 
 # Keep the languages bar honest: mark generated or vendored files so they don't count.
-# web/dist/** linguist-generated
-# data/** linguist-generated
-# vendor/** linguist-vendored
+eval/** linguist-generated
+examples/** linguist-generated
+core/src/risk_model.inc linguist-generated

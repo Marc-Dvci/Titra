@@ -32,7 +32,7 @@ typedef struct {
 #define TF_FLAG_SYSTEM 0x40u           /* a process restarted in this window */
 #define TF_FLAG_COUNT 7
 
-/* The thresholds behind the flags, tuned on the development seeds only (eval/flag_thresholds.json). */
+/* The thresholds behind the flags, tuned on the development seeds only (eval/flag_cases.json). */
 typedef struct {
     int min_trend_window_s;  /* the need's trend needs at least this much valid history */
     int min_rate_window_s;   /* rates per hour need at least this long a window */

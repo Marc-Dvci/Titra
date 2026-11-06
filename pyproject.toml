@@ -46,3 +46,5 @@ show_missing = true
 
 [tool.codespell]
 skip = "*.png,*.jpg,*.gif,*.svg,*.lock,package-lock.json,.git,.venv,node_modules"
+ignore-words-list = "increas,decreas"
+

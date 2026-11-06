@@ -6,12 +6,13 @@ abstract: >-
   An oxygen controller for preterm babies on CPAP, built on QNX 8.0, that holds SpO2 in the 91-95% target range and
   puts each cot in a defined safe state when a sensor, a cable or a piece of its own software fails. The repository
   holds the deterministic C core, the QNX processes and image, a simulated preterm baby, oximeter and blender, the
-  closed-loop and step-test evaluation, and a fault matrix measured on the host clock against the QNX guest.
+  closed-loop and step-test evaluation, an on-board advisor with a looped language model as a QNX resource manager, and a
+  fault matrix measured on the host clock against the QNX guest.
 authors:
   - family-names: Donovici
     given-names: Marc
 version: 1.0.0
-date-released: "2026-11-05"
+date-released: "2026-11-06"
 license: MIT
 repository-code: "https://github.com/Marc-Dvci/Titra"
 keywords:
