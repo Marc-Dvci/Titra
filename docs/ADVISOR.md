@@ -186,12 +186,12 @@ python -m bench risk held_out                          # the forecast and its ba
 python -m bench model-cases held_out                   # the windows the model replays
 python -m bench model-score eval/results/model_outputs_held_out_L1.jsonl eval/model_windows_held_out.txt
 qnx/llm/kernels/run_test.sh                            # the kernels against ggml's generic ones
-qnx/build/x86_64/llm_bench                             # kernels before and after: -X turns repacking off (host build)
 python scripts/measure_board.py                        # timing on the board, with the guest up and the bench connected
 python scripts/train_risk.py                           # the forecast's training, development seeds only
 ```
 
-Answers are recorded with [`qnx/llm/replay_host.cpp`](../qnx/llm/replay_host.cpp).
+Answers are recorded with [`qnx/llm/replay_host.cpp`](../qnx/llm/replay_host.cpp). The kernels' before and after comes from
+[`qnx/llm/llm_bench.cpp`](../qnx/llm/llm_bench.cpp), where `-X` turns repacking off.
 
 The model is not in the repository: NVIDIA Nemotron Labs Dory 1.0 4B, Q5_K_M GGUF, 3,673,288,864 bytes, SHA-256
 `96080be49ffd67b916018b7bdef8c484762576fb52780e10ab98ac4978a660e0`, licence OpenMDW-1.1.
