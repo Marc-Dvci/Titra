@@ -1,11 +1,11 @@
 """The on-board model's evaluation: the case windows, and the scoring of what the model wrote.
 
-    python -m bench model-cases development     write the windows the board replays (eval/model_windows_development.txt)
+    python -m bench model-cases development     write the windows to replay (eval/model_windows_development.txt)
     python -m bench model-score FILE.jsonl      score recorded answers against their windows
 
-The board replays the windows through /dev/llm with `advisor -r` and records one JSON line per answer. Scoring runs the
-answers again through the same C validator the board uses, so CI re-validates every recorded output with no model and
-no QNX. Facts, flags and ground truth come from the C core and the simulator.
+`qnx/llm/replay_host.cpp`, or `advisor -r` on the board, replays the windows and records one JSON line per answer. Scoring
+runs the answers again through the same C validator the board uses, so CI re-validates every recorded output with no model
+and no QNX. Facts, flags and ground truth come from the C core and the simulator.
 """
 
 from __future__ import annotations

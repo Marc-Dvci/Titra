@@ -105,8 +105,8 @@ TEST(test_the_names_fio2_and_spo2_are_not_numbers) {
     c[0].time_in_target_pct = 88;
     c[0].flags = TF_FLAG_HOLD_FALLBACK;
     ta_watch_t w;
-    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":3,\"action\":\"check the system\",\"why\":\"FiO2 and SpO2 held.\"}]}", c, 1, &w), TA_OK);
-    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":3,\"action\":\"check the system\",\"why\":\"Held for 2 hours.\"}]}", c, 1, &w), TA_ERR_NUMBER);
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":3,\"action\":\"check the system\",\"why\":\"FiO2 and SpO2 hold.\"}]}", c, 1, &w), TA_OK);
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":3,\"action\":\"check the system\",\"why\":\"Hold for 2 hours.\"}]}", c, 1, &w), TA_ERR_NUMBER);
     CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":3,\"action\":\"check the system\",\"why\":\"FiO27 is wrong.\"}]}", c, 1, &w), TA_ERR_NUMBER);
 }
 
@@ -115,9 +115,11 @@ TEST(test_the_grammar_lets_a_sentence_finish_and_name_fio2) {
     three(c);
     char g[16384];
     CHECK(ta_watch_grammar(c, 3, g, sizeof g) > 0);
-    CHECK(strstr(g, "\"FiO2\" | \"SpO2\"") != NULL);
-    /* Words have one space between them, so a sentence cannot be padded, and the last word is one that can end it. */
-    CHECK(strstr(g, "w2 ::= (u2 \" \"){0,15} e2 \".\"\n") != NULL);
+    /* Findings, then what the nurse should do, then one full stop: nothing can be padded, and nothing can trail off. */
+    CHECK(strstr(g, "w2 ::= f2 (\" and \" f2){0,1} \" \" v2 \" the nurse should \" a2 \".\"\n") != NULL);
+    CHECK(strstr(g, "f2 ::= [fF] \"requent desaturations\"") != NULL);
+    /* One flag, one finding: no "and" to repeat it with. */
+    CHECK(strstr(g, "w3 ::= f3 \" \" v3 \" the nurse should \" a3 \".\"\n") != NULL);
 }
 
 TEST(test_the_model_has_no_digits_and_the_facts_keep_their_phrases) {
@@ -139,12 +141,9 @@ TEST(test_the_model_has_no_digits_and_the_facts_keep_their_phrases) {
     /* No phrase with a number reaches the grammar of a sentence, and its words have no digit but the names'. */
     CHECK(strstr(g, "percent") == NULL);
     CHECK(strstr(g, "seconds") == NULL);
-    const char *rule = strstr(g, "u1 ::= ");
+    const char *rule = strstr(g, "f1 ::= ");
     CHECK(rule != NULL);
-    for (const char *p = rule + 7; *p && *p != '\n'; p++) {
-        if (strncmp(p, "FiO2", 4) == 0 || strncmp(p, "SpO2", 4) == 0) p += 4;
-        CHECK(*p < '0' || *p > '9');
-    }
+    for (const char *p = rule + 7; *p && *p != '\n'; p++) CHECK(*p < '0' || *p > '9');
 }
 
 TEST(test_a_cots_words_come_with_its_flags) {
@@ -152,25 +151,17 @@ TEST(test_a_cots_words_come_with_its_flags) {
     c[0] = cot(1, TF_FLAG_PROBE, 92);
     char g[8192];
     CHECK(ta_watch_grammar(c, 1, g, sizeof g) > 0);
-    CHECK(strstr(g, "\"robe\"") != NULL);
-    CHECK(strstr(g, "\"esaturations\"") == NULL);
-    CHECK(strstr(g, "\"ising\"") == NULL);
-    CHECK(strstr(g, "\"eaning\"") == NULL);
+    CHECK(strstr(g, "robe trouble") != NULL);
+    CHECK(strstr(g, "esaturations") == NULL);
+    CHECK(strstr(g, "ising") == NULL);
+    CHECK(strstr(g, "ean opportunity") == NULL);
     /* Nor is there a word for reassurance or a setting, on any cot. */
     c[0].flags = 0x7f;
     CHECK(ta_watch_grammar(c, 1, g, sizeof g) > 0);
-    CHECK(strstr(g, "\"table\"") == NULL);
-    CHECK(strstr(g, "\"afe\"") == NULL);
-    CHECK(strstr(g, "\"ncrease\"") == NULL);
-    CHECK(strstr(g, "\"esaturations\"") != NULL);
-    /* No word twice: a list with repeats would parse each of them two ways. */
-    const char *rule = strstr(g, "u1 ::= ");
-    CHECK(rule != NULL);
-    const char *first = strstr(rule, "\"xygen\"");
-    CHECK(first != NULL);
-    const char *line_end = strchr(rule, '\n');
-    const char *second = strstr(first + 1, "\"xygen\"");
-    CHECK(second == NULL || second > line_end);
+    CHECK(strstr(g, "table") == NULL);
+    CHECK(strstr(g, "safe") == NULL);
+    CHECK(strstr(g, "ncrease") == NULL);
+    CHECK(strstr(g, "esaturations") != NULL);
 }
 
 TEST(test_a_fact_of_zero_is_said_in_words_and_cannot_be_quoted) {
@@ -261,7 +252,25 @@ static ta_result_t about_probe_cot(const char *why) {
 
 TEST(test_a_sentence_from_the_cots_own_words_passes) {
     CHECK_EQ_INT(about_probe_cot("Probe trouble means the nurse should check the site."), TA_OK);
-    CHECK_EQ_INT(about_probe_cot("The probe signal was lost often."), TA_OK);
+    CHECK_EQ_INT(about_probe_cot("Unreliable readings mean the nurse should check the probe."), TA_OK);
+}
+
+TEST(test_words_strung_together_are_not_a_sentence) {
+    CHECK_EQ_INT(about_probe_cot("Probe trouble means the should check the site."), TA_ERR_WORD);
+    CHECK_EQ_INT(about_probe_cot("Probe trouble and a should check the site."), TA_ERR_WORD);
+    CHECK_EQ_INT(about_probe_cot("A unreliable reading."), TA_ERR_WORD);
+    CHECK_EQ_INT(about_probe_cot("Probe trouble and probe trouble."), TA_ERR_WORD);
+    CHECK_EQ_INT(about_probe_cot("The probe and the site."), TA_OK);
+}
+
+TEST(test_two_actions_may_both_start_the_same_way) {
+    CHECK_EQ_INT(about_probe_cot("Probe trouble means the nurse should check the site and check the probe."), TA_OK);
+}
+
+TEST(test_a_sentence_says_nothing_about_the_order) {
+    /* The row says which cot comes first: a sentence must not be able to disagree with it. */
+    CHECK_EQ_INT(about_probe_cot("Check the probe site first."), TA_ERR_WORD);
+    CHECK_EQ_INT(about_probe_cot("Check the probe site next."), TA_ERR_WORD);
 }
 
 TEST(test_reassurance_has_no_words) {
@@ -366,8 +375,8 @@ TEST(test_cots_in_one_tier_may_come_in_any_order) {
     c[0].flags = TF_FLAG_HOLD_FALLBACK;
     c[2].flags = TF_FLAG_DESATS;
     const char *const orders[] = {
-        "{\"notes\":[{\"cot\":1,\"action\":\"check the system\",\"why\":\"Held.\"},{\"cot\":2,\"action\":\"review respiratory support\",\"why\":\"Dips.\"},{\"cot\":3,\"action\":\"review respiratory support\",\"why\":\"Dips.\"}]}",
-        "{\"notes\":[{\"cot\":3,\"action\":\"review respiratory support\",\"why\":\"Dips.\"},{\"cot\":2,\"action\":\"review respiratory support\",\"why\":\"Dips.\"},{\"cot\":1,\"action\":\"check the system\",\"why\":\"Held.\"}]}",
+        "{\"notes\":[{\"cot\":1,\"action\":\"check the system\",\"why\":\"Hold.\"},{\"cot\":2,\"action\":\"review respiratory support\",\"why\":\"Dips.\"},{\"cot\":3,\"action\":\"review respiratory support\",\"why\":\"Dips.\"}]}",
+        "{\"notes\":[{\"cot\":3,\"action\":\"review respiratory support\",\"why\":\"Dips.\"},{\"cot\":2,\"action\":\"review respiratory support\",\"why\":\"Dips.\"},{\"cot\":1,\"action\":\"check the system\",\"why\":\"Hold.\"}]}",
     };
     ta_watch_t w;
     CHECK_EQ_INT(ta_validate_watch(orders[0], c, 3, &w), TA_OK);

@@ -251,20 +251,22 @@ static const struct {
     uint32_t flags;
     const char *words;
 } VOCABULARY[] = {
-    {0, "the a and so of to on with while during over this baby cot nurse should mean means meant had was were has is are "
-        "shift time next first then needs FiO2 SpO2"},
-    {TF_FLAG_DESATS, "frequent many often desaturation desaturations dips drops episodes oxygen review respiratory support"},
-    {TF_FLAG_RISING_NEED, "rising rose increasing oxygen need more requirement review respiratory support"},
-    {TF_FLAG_WEAN, "wean weaning opportunity consider oxygen need"},
-    {TF_FLAG_PROBE, "probe trouble site signal readings reading unreliable disconnected often frequent many events lost off check"},
-    {TF_FLAG_HOLD_FALLBACK, "hold fallback held long readings unreliable controller kept check system probe site"},
-    {TF_FLAG_HIGH_NEED, "high oxygen need stayed review respiratory support"},
-    {TF_FLAG_SYSTEM, "restart restarted system process check probe site"},
+    {0, "the and nurse should mean means FiO2 SpO2"},
+    {TF_FLAG_DESATS, "frequent desaturation desaturations dips review respiratory support"},
+    {TF_FLAG_RISING_NEED, "rising oxygen need review respiratory support"},
+    {TF_FLAG_WEAN, "wean weaning opportunity consider"},
+    {TF_FLAG_PROBE, "probe trouble site signal readings unreliable check"},
+    {TF_FLAG_HOLD_FALLBACK, "hold or fallback readings unreliable check system probe site"},
+    {TF_FLAG_HIGH_NEED, "high oxygen need review respiratory support"},
+    {TF_FLAG_SYSTEM, "restart system check probe site"},
 };
 
 /* A sentence cannot stop on these: at the word limit the model must finish, not trail off. */
-static const char NOT_LAST[] = "the a and so of to on with while during over this should mean means meant had was were has is are then needs nurse "
-                               "baby cot many frequent high long rising more";
+static const char NOT_LAST[] = "the a and of on with while during over this should mean means meant had was were has is are nurse "
+                               "baby cot many frequent high long rising";
+
+/* What cannot follow "the" or "a": a sentence that reads as words strung together is not shown, even if each word is allowed. */
+static const char NOT_AFTER_DETERMINER[] = "the a and of on with while during over this should mean means meant had was were has is are";
 
 static int same_word(const char *a, size_t na, const char *b, size_t nb) {
     if (na != nb) return 0;
@@ -291,44 +293,52 @@ static int word_allowed(uint32_t flags, const char *w, size_t n) {
     return 0;
 }
 
-/* One alternative for a word: its first letter in either case, except a name, which is spelled one way. */
-static void gr_word(sb_t *b, const char *w, size_t n, int *first) {
-    sb_put(b, "%s", *first ? "" : " | ");
-    *first = 0;
-    if (same_word(w, n, "FiO2", 4) || same_word(w, n, "SpO2", 4)) {
-        sb_put(b, "\"%.*s\"", (int)n, w);
-    } else {
-        sb_put(b, "[%c%c]", w[0], toupper((unsigned char)w[0]));
-        if (n > 1) sb_put(b, " \"%.*s\"", (int)(n - 1), w + 1);
-    }
-}
+/* What a sentence can say a flag means, and the rule that says where it may go. Its first letter in either case. */
+static const struct {
+    uint32_t flag;
+    const char *finding;
+} FINDINGS[] = {
+    {TF_FLAG_DESATS, "frequent desaturations"},
+    {TF_FLAG_RISING_NEED, "rising need"},
+    {TF_FLAG_RISING_NEED, "rising oxygen need"},
+    {TF_FLAG_WEAN, "wean opportunity"},
+    {TF_FLAG_PROBE, "probe trouble"},
+    {TF_FLAG_PROBE, "unreliable readings"},
+    {TF_FLAG_HOLD_FALLBACK, "hold or fallback"},
+    {TF_FLAG_HIGH_NEED, "high oxygen need"},
+    {TF_FLAG_SYSTEM, "system restart"},
+};
 
-/* Every word of this cot once, all of them or only those that can end a sentence. */
-static void gr_vocabulary(sb_t *b, uint32_t flags, int enders_only) {
-    int first = 1;
-    for (size_t i = 0; i < sizeof VOCABULARY / sizeof VOCABULARY[0]; i++) {
-        if (VOCABULARY[i].flags != 0 && !(flags & VOCABULARY[i].flags)) continue;
-        for (const char *p = VOCABULARY[i].words; *p;) {
-            const char *q = p;
-            while (*q && *q != ' ') q++;
-            const size_t n = (size_t)(q - p);
-            int seen = enders_only && word_in_list(NOT_LAST, p, n);
-            for (size_t k = 0; k < i && !seen; k++) {
-                seen = (VOCABULARY[k].flags == 0 || (flags & VOCABULARY[k].flags)) && word_in_list(VOCABULARY[k].words, p, n);
-            }
-            if (!seen) gr_word(b, p, n, &first);
-            p = *q ? q + 1 : q;
-        }
-    }
-}
-
-/* The sentence of a flagged cot: its own words, one space between them, one full stop, and no digit. A model given free
- * letters trails into nonsense at any word limit, and a model given numbers lands in whichever phrase fits. */
+/* The sentence of a flagged cot: one or more of its findings, then what the nurse should do, from the actions its flags allow.
+ * Nothing else fits, so there is no digit, no word for a setting or for reassurance, and no way to trail off: a model given
+ * free letters runs into nonsense at any word limit, and a model given numbers lands in whichever phrase fits. The model
+ * chooses which findings and actions to say and in what order. */
 static void gr_sentence(sb_t *b, const tf_facts_t *f) {
-    sb_put(b, "w%d ::= (u%d \" \"){0,%d} e%d \".\"\nu%d ::= ", f->cot, f->cot, SENTENCE_WORDS - 1, f->cot, f->cot);
-    gr_vocabulary(b, f->flags, 0);
-    sb_put(b, "\ne%d ::= ", f->cot);
-    gr_vocabulary(b, f->flags, 1);
+    int flags = 0;
+    for (uint32_t bit = 1; bit < (1u << TF_FLAG_COUNT); bit <<= 1) flags += (f->flags & bit) != 0;
+    const char *allowed[6];
+    const int actions = ta_allowed_actions(f->flags, allowed, 6);
+    sb_put(b, "w%d ::= f%d", f->cot, f->cot);
+    if (flags > 1) sb_put(b, " (\" and \" f%d){0,%d}", f->cot, flags - 1);
+    sb_put(b, " \" \" v%d \" the nurse should \" a%d", f->cot, f->cot);
+    if (actions > 1) sb_put(b, " (\" and \" a%d)?", f->cot);
+    sb_put(b, " \".\"\nv%d ::= \"mean\" | \"means\"\nf%d ::= ", f->cot, f->cot);
+    int first = 1;
+    for (size_t i = 0; i < sizeof FINDINGS / sizeof FINDINGS[0]; i++) {
+        if (!(f->flags & FINDINGS[i].flag)) continue;
+        const char *t = FINDINGS[i].finding;
+        sb_put(b, "%s[%c%c] \"%s\"", first ? "" : " | ", t[0], toupper((unsigned char)t[0]), t + 1);
+        first = 0;
+    }
+    sb_put(b, "\n");
+}
+
+/* The allowed actions of a cot, as a rule the JSON and its sentence share. */
+static void gr_actions(sb_t *b, const tf_facts_t *f) {
+    const char *allowed[6];
+    const int m = ta_allowed_actions(f->flags, allowed, 6);
+    sb_put(b, "a%d ::= ", f->cot);
+    for (int i = 0; i < m; i++) sb_put(b, "%s\"%s\"", i ? " | " : "", allowed[i]);
     sb_put(b, "\n");
 }
 
@@ -339,11 +349,8 @@ static void gr_note_rules(sb_t *b, const tf_facts_t *f) {
     } else {
         gr_sentence(b, f);
     }
-    const char *allowed[6];
-    const int m = ta_allowed_actions(f->flags, allowed, 6);
-    sb_put(b, "a%d ::= ", f->cot);
-    for (int i = 0; i < m; i++) sb_put(b, "%s\"%s\"", i ? " | " : "", allowed[i]);
-    sb_put(b, "\nn%d ::= \"{\\\"cot\\\":%d,\\\"action\\\":\\\"\" a%d \"\\\",\\\"why\\\":\\\"\" w%d \"\\\"}\"\n", f->cot, f->cot, f->cot,
+    gr_actions(b, f);
+    sb_put(b, "n%d ::= \"{\\\"cot\\\":%d,\\\"action\\\":\\\"\" a%d \"\\\",\\\"why\\\":\\\"\" w%d \"\\\"}\"\n", f->cot, f->cot, f->cot,
            f->cot);
 }
 
@@ -404,6 +411,7 @@ int ta_handover_grammar(const tf_facts_t *cots, int n, char *out, size_t cap) {
         if (cots[i].flags == 0) continue;
         sb_put(&b, "h%d ::= \"{\\\"cot\\\":%d,\\\"summary\\\":\\\"\" w%d \"\\\"}\"\n", cots[i].cot, cots[i].cot, cots[i].cot);
         gr_sentence(&b, &cots[i]);
+        gr_actions(&b, &cots[i]);
     }
     return sb_done(&b);
 }
@@ -534,20 +542,33 @@ static int cot_index(const tf_facts_t *cots, int n, int cot) {
 static int words_ok(const char *why, uint32_t flags) {
     const size_t n = strlen(why);
     if (n < 2 || why[n - 1] != '.') return 0;
-    const char *end = why + n - 1, *last = NULL;
-    size_t last_len = 0;
+    const char *end = why + n - 1;
+    const char *word[SENTENCE_WORDS * 2];
+    size_t len[SENTENCE_WORDS * 2];
+    int count = 0;
     for (const char *p = why; p < end;) {
         const char *q = p;
         while (q < end && *q != ' ') q++;
-        const size_t len = (size_t)(q - p);
-        if (len == 0 || !word_allowed(flags, p, len)) return 0;
-        last = p;
-        last_len = len;
+        const size_t l = (size_t)(q - p);
+        if (l == 0 || !word_allowed(flags, p, l) || count == SENTENCE_WORDS * 2) return 0;
+        word[count] = p;
+        len[count++] = l;
         if (q == end) break;
         p = q + 1;
         if (p == end) return 0;
     }
-    return last != NULL && !word_in_list(NOT_LAST, last, last_len);
+    if (count == 0 || word_in_list(NOT_LAST, word[count - 1], len[count - 1])) return 0;
+    for (int i = 0; i + 1 < count; i++) {
+        const int the = same_word(word[i], len[i], "the", 3), a = same_word(word[i], len[i], "a", 1);
+        if ((the || a) && word_in_list(NOT_AFTER_DETERMINER, word[i + 1], len[i + 1])) return 0;
+        if (a && strchr("aeiouAEIOU", word[i + 1][0]) != NULL) return 0;
+        /* The same two words again: a model going round in a circle. Two actions may both start "check the". */
+        if (same_word(word[i], len[i], "check", 5)) continue;
+        for (int k = i + 1; k + 1 < count; k++) {
+            if (same_word(word[i], len[i], word[k], len[k]) && same_word(word[i + 1], len[i + 1], word[k + 1], len[k + 1])) return 0;
+        }
+    }
+    return 1;
 }
 
 static ta_result_t check_text(const char *why, const tf_facts_t *f) {

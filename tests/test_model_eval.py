@@ -46,7 +46,11 @@ GOOD = json.dumps(
                 "action": "review respiratory support",
                 "why": "Rising need and frequent dips mean the nurse should review respiratory support.",
             },
-            {"cot": 3, "action": "check the probe site", "why": "The probe signal was lost often."},
+            {
+                "cot": 3,
+                "action": "check the probe site",
+                "why": "Probe trouble means the nurse should check the probe site.",
+            },
             {"cot": 1, "action": "nothing flagged", "why": "Time in target 90 percent."},
         ]
     },
@@ -216,7 +220,7 @@ def test_a_small_window_file_is_written_from_the_simulator(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("path", sorted(RESULTS.glob("model_outputs_*.jsonl")), ids=lambda p: p.stem)
-def test_recorded_answers_still_pass_the_validator_they_passed_on_the_board(path: Path) -> None:
+def test_recorded_answers_still_get_the_verdict_they_were_recorded_with(path: Path) -> None:
     set_name = "held_out" if "held_out" in path.stem else "development"
     windows = model_eval.read_windows(ROOT / "eval" / f"model_windows_{set_name}.txt")
     for line in path.read_text(encoding="utf-8").splitlines():
