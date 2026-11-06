@@ -304,6 +304,19 @@ static void run_watch(const char *const *notes) {
     const int n = g_ncots;
     pthread_mutex_unlock(&g_mtx);
 
+    /* With no flag on the ward the rules' own sentences are the whole answer, and the model is not asked. */
+    int any_flag = 0;
+    for (int i = 0; i < n; i++) any_flag |= facts[i].flags != 0;
+    if (!any_flag) {
+        pthread_mutex_lock(&g_mtx);
+        g_watch = fallback;
+        snprintf(g_watch_source, sizeof g_watch_source, "flags");
+        snprintf(g_watch_validator, sizeof g_watch_validator, "nothing flagged");
+        memset(&g_watch_result, 0, sizeof g_watch_result);
+        g_watch_t = titra_now();
+        pthread_mutex_unlock(&g_mtx);
+        return;
+    }
     llm_result_t r;
     int got = -1;
     if (ta_watch_prompt(facts, n, notes, prompt, sizeof prompt) > 0 && ta_watch_grammar(facts, n, grammar, sizeof grammar) > 0) {

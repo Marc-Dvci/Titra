@@ -93,6 +93,7 @@ function modelLine() {
   if (!advice.watch) return "Advisor starting.";
   const w = advice.watch, source = w.source === "model"
     ? `Written by the on-board model and checked against the facts: ${w.loops} loop${w.loops === 1 ? "" : "s"}, ${w.tokens} tokens, ${(w.total_ms / 1000).toFixed(0)} s`
+    : w.validator === "nothing flagged" ? "Nothing flagged: the rules' own sentences"
     : "Deterministic flags" + (advice.model === "unavailable" ? ": the model is unavailable" : "");
   const age = w.age_s >= 0 ? ` · ${Math.round(w.age_s / 60)} min ago` : "";
   return `${source}${age}. Advice only: this software has no path to any blender.`;

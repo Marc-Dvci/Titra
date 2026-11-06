@@ -113,23 +113,25 @@ TEST(test_the_grammar_lets_a_sentence_finish_and_name_fio2) {
     char g[16384];
     CHECK(ta_watch_grammar(c, 3, g, sizeof g) > 0);
     CHECK(strstr(g, "\"FiO2\" | \"SpO2\"") != NULL);
-    CHECK(strstr(g, "w1 ::= (segf | w1num seg) (w1num seg){0,2} w1num? \".\"") != NULL);
+    CHECK(strstr(g, "w2 ::= (segf | w2num seg) (w2num seg){0,2} w2num? \".\"") != NULL);
     /* Words have one space between them, so a sentence cannot be padded. */
     CHECK(strstr(g, "seg ::= \" \"? wd (\" \" wd){0,9} \" \"?") != NULL);
 }
 
 TEST(test_digits_appear_only_inside_phrases_in_the_grammar) {
     tf_facts_t c[1];
-    c[0] = cot(1, 0, 92);
+    c[0] = cot(1, TF_FLAG_PROBE, 92);
     c[0].risk_pct = 12;
-    char phrases[16][TA_PHRASE_MAX];
-    const int n = ta_cot_phrases(&c[0], phrases, 16);
+    char phrases[18][TA_PHRASE_MAX];
+    const int n = ta_cot_phrases(&c[0], phrases, 18);
     CHECK(n >= 5);
     CHECK(strcmp(phrases[0], "time in target 92 percent") == 0);
     CHECK(strcmp(phrases[1], "Time in target 92 percent") == 0);
-    CHECK(strcmp(phrases[2], "6 desaturation episodes") == 0);
-    CHECK(strcmp(phrases[3], "longest 48 seconds") == 0);
-    CHECK(strcmp(phrases[4], "FiO2 from 0.25 to 0.34") == 0);
+    CHECK(strcmp(phrases[2], "Cot 1") == 0);
+    CHECK(strcmp(phrases[3], "cot 1") == 0);
+    CHECK(strcmp(phrases[4], "6 desaturation episodes") == 0);
+    CHECK(strcmp(phrases[5], "longest 48 seconds") == 0);
+    CHECK(strcmp(phrases[6], "FiO2 from 0.25 to 0.34") == 0);
     char g[8192];
     CHECK(ta_watch_grammar(c, 1, g, sizeof g) > 0);
     /* Bare numbers are gone from the rule that allows them. */
@@ -160,8 +162,8 @@ TEST(test_one_episode_and_one_event_are_singular) {
     c[0].desat_episodes = 1;
     c[0].probe_events = 1;
     c[0].restarts = 1;
-    char phrases[16][TA_PHRASE_MAX];
-    const int n = ta_cot_phrases(&c[0], phrases, 16);
+    char phrases[18][TA_PHRASE_MAX];
+    const int n = ta_cot_phrases(&c[0], phrases, 18);
     int ep = 0, ev = 0, re = 0;
     for (int i = 0; i < n; i++) {
         ep |= strcmp(phrases[i], "1 desaturation episode") == 0;
@@ -181,6 +183,38 @@ TEST(test_a_sentence_cannot_deny_what_the_facts_show) {
     c[0].longest_desat_s = 0;
     c[0].probe_events = 0;
     CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"no action needed\",\"why\":\"No desaturation episodes and no probe trouble.\"}]}", c, 1, &w), TA_OK);
+}
+
+TEST(test_a_cot_with_no_flag_gets_the_rules_own_sentence) {
+    tf_facts_t c[1];
+    c[0] = cot(1, 0, 92);
+    char g[4096];
+    CHECK(ta_watch_grammar(c, 1, g, sizeof g) > 0);
+    CHECK(strstr(g, "w1 ::= \"No flags; time in target 92 percent.\"") != NULL);
+    ta_watch_t w;
+    ta_fallback_watch(c, 1, &w);
+    CHECK(strcmp(w.notes[0].why, "No flags; time in target 92 percent.") == 0);
+    char text[512];
+    snprintf(text, sizeof text, "{\"notes\":[{\"cot\":1,\"action\":\"no action needed\",\"why\":\"%s\"}]}", "No flags; time in target 92 percent.");
+    CHECK_EQ_INT(ta_validate_watch(text, c, 1, &w), TA_OK);
+}
+
+TEST(test_the_prompt_lists_cots_in_the_rules_order) {
+    tf_facts_t c[3];
+    three(c);
+    c[0].priority = 5;
+    c[1].priority = 300;
+    c[2].priority = 800;
+    const char *notes[3] = {"note one", "note two", "note three"};
+    char p[8192];
+    CHECK(ta_watch_prompt(c, 3, notes, p, sizeof p) > 0);
+    const char *a = strstr(p, "Cot 3,"), *b = strstr(p, "Cot 2,"), *d = strstr(p, "Cot 1,");
+    CHECK(a != NULL && b != NULL && d != NULL);
+    CHECK(a < b && b < d);
+    /* Each note stays with its own cot. */
+    CHECK(strstr(a, "note three") < b);
+    CHECK(strstr(b, "note two") < d);
+    CHECK_EQ_INT(ta_watch_prompt(c, TA_MAX_COTS + 1, NULL, p, sizeof p), -1);
 }
 
 TEST(test_the_labels_of_the_prompt_are_allowed_numbers) {
@@ -374,7 +408,9 @@ TEST(test_the_forecast_is_a_fact_the_model_may_quote) {
     char p[4096], g[8192];
     CHECK(ta_watch_prompt(c, 1, NULL, p, sizeof p) > 0);
     CHECK(strstr(p, "37 percent chance of a dip") != NULL);
-    CHECK(ta_watch_grammar(c, 1, g, sizeof g) > 0);
+    tf_facts_t flagged = c[0];
+    flagged.flags = TF_FLAG_PROBE;
+    CHECK(ta_watch_grammar(&flagged, 1, g, sizeof g) > 0);
     CHECK(strstr(g, "\"37 percent chance of a dip\"") != NULL);
     ta_watch_t w;
     CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"no action needed\",\"why\":\"A 37 percent chance of a dip.\"}]}", c, 1, &w), TA_OK);
@@ -429,19 +465,16 @@ TEST(test_the_grammar_lists_only_that_cots_numbers_and_actions) {
     c[0].time_in_target_pct = 91;
     char g[16384];
     CHECK(ta_watch_grammar(c, 3, g, sizeof g) > 0);
-    const char *w1 = strstr(g, "w1num ::=");
     const char *w2 = strstr(g, "w2num ::=");
-    CHECK(w1 != NULL && w2 != NULL);
-    char line[512];
-    size_t n = (size_t)(strchr(w1, '\n') - w1);
-    memcpy(line, w1, n);
-    line[n] = '\0';
-    CHECK(strstr(line, "\"time in target 91 percent\"") != NULL);
-    n = (size_t)(strchr(w2, '\n') - w2);
+    CHECK(w2 != NULL);
+    char line[1024];
+    const size_t n = (size_t)(strchr(w2, '\n') - w2);
     memcpy(line, w2, n);
     line[n] = '\0';
     CHECK(strstr(line, "91 percent") == NULL);
     CHECK(strstr(line, "\"time in target 71 percent\"") != NULL);
+    /* Cot 1 has no flag: its sentence is the rules' own. */
+    CHECK(strstr(g, "w1 ::= \"No flags; time in target 91 percent.\"") != NULL);
     const char *a1 = strstr(g, "a1 ::= ");
     CHECK(a1 != NULL && strncmp(a1, "a1 ::= \"no action needed\"\n", 26) == 0);
 }
