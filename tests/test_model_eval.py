@@ -173,6 +173,20 @@ def test_the_case_set_keeps_its_seeds_apart() -> None:
     assert set(WORDS) == set(model_eval.FLAG_NAMES)
 
 
+@pytest.mark.integration
+def test_a_small_window_file_is_written_from_the_simulator(tmp_path: Path) -> None:
+    cfg = json.loads(model_eval.CASES.read_text(encoding="utf-8"))
+    cfg["wards"] = [["stable", "moderate", "unstable"]]
+    cfg["handover_wards"] = [["stable", "moderate", "unstable"]]
+    cfg["end_s"] = [10800]
+    cfg["seeds"] = {"development": [0], "held_out": [1000]}
+    path = model_eval.write_windows("development", tmp_path, cfg)
+    windows = model_eval.read_windows(path)
+    assert set(windows) == {"w0-s0-e10800", "h0-s0"}
+    assert [f["cot"] for f in windows["w0-s0-e10800"].facts] == [1, 2, 3]
+    assert windows["h0-s0"].kind == "handover"
+
+
 @pytest.mark.parametrize("path", sorted(RESULTS.glob("model_outputs_*.jsonl")), ids=lambda p: p.stem)
 def test_recorded_answers_still_pass_the_validator_they_passed_on_the_board(path: Path) -> None:
     set_name = "held_out" if "held_out" in path.stem else "development"

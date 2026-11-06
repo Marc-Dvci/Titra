@@ -137,9 +137,9 @@ def read_windows(path: Path) -> dict[str, Window]:
     return out
 
 
-def write_windows(set_name: str) -> Path:
-    path = ROOT / "eval" / f"model_windows_{set_name}.txt"
-    path.write_text(windows_text(build_windows(set_name)), encoding="utf-8")
+def write_windows(set_name: str, out_dir: Path = ROOT / "eval", cfg: dict[str, Any] | None = None) -> Path:
+    path = out_dir / f"model_windows_{set_name}.txt"
+    path.write_text(windows_text(build_windows(set_name, cfg)), encoding="utf-8")
     return path
 
 

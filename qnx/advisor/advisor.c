@@ -44,6 +44,8 @@
 #define HANDOVER_DEADLINE_MS 600000u
 #define INCIDENT_DEADLINE_MS 15000u
 #define OUTPUT_MAX 4096
+#define FIRST_WATCH_S 300.0
+#define MODEL_FRESH_S 3.0
 #define PROMPT_MAX 8192
 #define GRAMMAR_MAX 16384
 
@@ -85,6 +87,7 @@ static char g_watch_validator[16] = "";
 static llm_result_t g_watch_result;
 static double g_watch_t;
 static int g_model_ok;
+static double g_model_seen = -100.0;
 static uint64_t g_model_answers, g_model_rejected, g_model_unavailable;
 
 static ta_watch_t g_handover;
@@ -193,6 +196,22 @@ static int model_is_ready(void) {
     return strstr(line, "\"state\":\"ready\"") != NULL;
 }
 
+/* A hung model would block whoever asks it, so only this thread asks: the cots' history never waits for the model. */
+static void *model_watcher(void *arg) {
+    (void)arg;
+    struct timespec one = {1, 0};
+    for (;;) {
+        if (model_is_ready()) {
+            const double now = titra_now();
+            pthread_mutex_lock(&g_mtx);
+            g_model_seen = now;
+            pthread_mutex_unlock(&g_mtx);
+        }
+        nanosleep(&one, NULL);
+    }
+    return NULL;
+}
+
 static void *poller(void *arg) {
     (void)arg;
     int fds[TA_MAX_COTS];
@@ -207,7 +226,6 @@ static void *poller(void *arg) {
         next.tv_sec += 1;
         clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
         const double now = titra_now();
-        const int model_ready = model_is_ready();
         pthread_mutex_lock(&g_mtx);
         for (int i = 0; i < g_ncots; i++) {
             char path[32];
@@ -224,7 +242,7 @@ static void *poller(void *arg) {
             record(&g_cots[i], i + 1, &s, ok, now);
         }
         compute_all_facts(g_facts, g_window_s, now);
-        g_model_ok = model_ready;
+        g_model_ok = now - g_model_seen < MODEL_FRESH_S;
         int changed = 0;
         for (int i = 0; i < g_ncots; i++) {
             if (g_facts[i].flags != last_flags[i]) changed = 1;
@@ -298,7 +316,7 @@ static void run_watch(const char *const *notes) {
     ta_watch_t fallback;
     ta_fallback_watch(facts, g_ncots, &fallback);
     if (g_watch_t == 0.0) {
-        g_watch = fallback;
+        g_watch = fallback; /* shown while the first answer is being written */
         g_watch_t = now;
     }
     const int n = g_ncots;
@@ -380,27 +398,28 @@ static void run_handover(void) {
     pthread_mutex_unlock(&g_mtx);
 }
 
+/* The ward's watch: every period, and at least a minute after the last one when a flag changes. A second's tick keeps this
+ * simple and costs nothing. The first watch waits for five minutes of history: before that the facts would say nothing
+ * true about any cot. */
 static void *slow_worker(void *arg) {
     const int period_s = *(int *)arg;
     static char note_text[TA_MAX_COTS][TA_NOTE_MAX + 1];
-    double next_watch = titra_now() + 20.0;
+    double next_watch = titra_now() + FIRST_WATCH_S;
     pthread_mutex_lock(&g_mtx);
     for (;;) {
-        struct timespec until;
-        clock_gettime(CLOCK_MONOTONIC, &until);
-        const double wait = next_watch - titra_now();
-        if (wait > 0.0) until.tv_sec += (time_t)wait + 1;
-        if (!g_handover_requested && !g_pending_flagged && wait > 0.0) {
+        if (!g_handover_requested) {
+            struct timespec until;
+            clock_gettime(CLOCK_MONOTONIC, &until);
+            until.tv_sec += 1;
             pthread_cond_timedwait(&g_wake, &g_mtx, &until);
         }
         const int handover = g_handover_requested;
         g_handover_requested = 0;
-        const int flagged = g_pending_flagged;
         const double now = titra_now();
-        const int due = now >= next_watch || (flagged && now >= next_watch - period_s + 60.0);
+        const int due = now >= next_watch || (g_pending_flagged && g_watch_t > 0.0 && now >= g_watch_t + 60.0);
         const char *notes[TA_MAX_COTS];
         for (int i = 0; i < g_ncots; i++) {
-            snprintf(note_text[i], sizeof note_text[i], "%s", g_cots[i].note);
+            memcpy(note_text[i], g_cots[i].note, sizeof note_text[i]);
             notes[i] = note_text[i];
         }
         if (due) g_pending_flagged = 0;
@@ -507,7 +526,9 @@ static int on_text(char *buf, int cap) {
     add_notes(buf, cap, &len, &g_watch);
     add(buf, cap, &len, "},\"flags\":[");
     for (int i = 0; i < g_ncots; i++) {
-        add(buf, cap, &len, "%s{\"cot\":%d,\"risk\":%d,\"flags\":[", i ? "," : "", i + 1, g_facts[i].risk_pct);
+        add(buf, cap, &len, "%s{\"cot\":%d,\"risk\":%d,\"note\":\"", i ? "," : "", i + 1, g_facts[i].risk_pct);
+        json_text(buf, cap, &len, g_cots[i].note);
+        add(buf, cap, &len, "\",\"flags\":[");
         int first = 1;
         for (uint32_t bit = 1; bit < (1u << TF_FLAG_COUNT); bit <<= 1) {
             if (g_facts[i].flags & bit) {
@@ -855,6 +876,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "advisor: %d cots, window %d s, a watch every %d s\n", g_ncots, g_window_s, period_s);
     pthread_t tid;
     pthread_create(&tid, NULL, poller, NULL);
+    pthread_create(&tid, NULL, model_watcher, NULL);
     pthread_create(&tid, NULL, incident_worker, NULL);
     static int period;
     period = period_s;

@@ -112,3 +112,35 @@ def test_the_cases_keep_their_seeds_apart() -> None:
     cfg = json.loads(risk.CASES.read_text(encoding="utf-8"))
     assert not set(cfg["seeds"]["development"]) & set(cfg["seeds"]["held_out"])
     assert cfg["horizon_s"] == 600
+
+
+SMALL = {
+    "below": 0.85,
+    "min_s": 10,
+    "horizon_s": 600,
+    "first_s": 1800,
+    "step_s": 600,
+    "alerts_per_hour": 2.0,
+    "families": ["moderate"],
+    "seeds": {"development": [0], "held_out": [1000]},
+    "baselines": ["dips_85_last_hour"],
+}
+
+
+@pytest.mark.integration
+def test_a_small_evaluation_runs_from_the_simulator_to_a_result_file(tmp_path: Path) -> None:
+    result = risk.write_results("development", tmp_path, SMALL)
+    assert result["minutes"] > 0
+    assert set(result["scorers"]) == {"dips_85_last_hour", "model"}
+    assert 0.0 <= result["scorers"]["model"]["auroc"] <= 1.0
+    saved = json.loads((tmp_path / "risk_development.json").read_text(encoding="utf-8"))
+    assert saved["minutes"] == result["minutes"]
+
+
+def test_the_committed_held_out_result_beats_every_baseline() -> None:
+    result = json.loads((ROOT / "eval" / "results" / "risk_held_out.json").read_text(encoding="utf-8"))["scorers"]
+    model = result["model"]
+    for name, baseline in result.items():
+        if name != "model":
+            assert model["auroc"] > baseline["auroc"], name
+            assert model["at_alert_rate"]["true_alerts"] > baseline["at_alert_rate"]["true_alerts"], name

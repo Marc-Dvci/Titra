@@ -1,7 +1,5 @@
 /*
- * What the model server on the board and the host replay tool have in common: how a token is chosen and how a request
- * is wrapped in the model's chat format. Sharing this code is what lets an answer recorded on a host GPU stand for the
- * board's answer: the same weights, prompt, grammar and sampler, differing only in where the arithmetic runs.
+ * How a token is chosen and how a request is wrapped in the model's chat format.
  */
 #ifndef TITRA_LLM_SHARED_H
 #define TITRA_LLM_SHARED_H

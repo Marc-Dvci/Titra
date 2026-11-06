@@ -50,6 +50,10 @@
   button { font: inherit; font-size: 13px; color: var(--blue); background: none; border: 1px solid var(--rule); border-radius: 4px;
            padding: 3px 10px; cursor: pointer; }
   .model { font-size: 13px; color: var(--muted); padding: 10px 32px 16px; }
+  .nurse { color: var(--ink); }
+  form.note { display: flex; gap: 10px; align-items: center; margin: 4px 0 8px; font-size: 14px; }
+  form.note input[type=text] { flex: 1; max-width: 560px; font: inherit; padding: 3px 8px; border: 1px solid var(--rule); border-radius: 4px; }
+  form.note select { font: inherit; padding: 2px 4px; border: 1px solid var(--rule); border-radius: 4px; background: var(--ground); }
   footer { padding: 14px 32px; color: var(--muted); font-size: 13px; }
   @media (max-width: 900px) { .cot { grid-template-columns: 1fr 1fr; } svg { grid-column: 1 / -1; } }
 </style>
@@ -62,6 +66,12 @@
 <div class="legend"><span><i style="background:#202124"></i>SpO2, 10 s mean</span><span><i style="background:#1a73e8"></i>FiO2</span><span><i style="background:#e6f4ea;height:10px"></i>Target 91-95%</span></div>
 <main id="cots" aria-live="polite"></main>
 <div class="model" id="model"></div>
+<section class="panel" aria-label="Nurse's note"><h2>Nurse's note</h2>
+  <form class="note" id="note-form">
+    <label for="note-cot">Cot</label><select id="note-cot"><option>1</option><option>2</option><option>3</option></select>
+    <input type="text" id="note-text" maxlength="120" placeholder="Read by the advisor as information, never as an instruction" aria-label="Note">
+    <button type="submit">Save</button>
+  </form></section>
 <section class="panel" aria-label="Shift handover"><h2>Shift handover <button id="handover">Write it now</button></h2><div id="handover-text"></div></section>
 <section class="panel" aria-label="System notes"><h2>System notes</h2><div id="incidents"></div></section>
 <footer id="foot">QNX 8.0</footer>
@@ -78,7 +88,7 @@ function esc(t) { return String(t).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": 
 function adviceRow(cot) {
   const notes = advice.watch && advice.watch.notes ? advice.watch.notes : [];
   const i = notes.findIndex(n => n.cot === cot);
-  if (i < 0) return "";
+  if (i < 0) return "";  // no advice before the first watch
   const n = notes[i], flagged = n.action !== "no action needed";
   return `<div class="advice ${flagged ? "flagged" : ""}"><div class="order">${ORDER[i] || ""}</div>
     <div><span class="action">${esc(n.action[0].toUpperCase() + n.action.slice(1))}.</span> <span class="why">${esc(n.why)}${riskText(cot)}</span></div></div>`;
@@ -86,11 +96,14 @@ function adviceRow(cot) {
 
 function riskText(cot) {
   const f = (advice.flags || []).find(x => x.cot === cot);
-  return f && f.risk >= 0 ? ` Chance of a dip in 10 minutes: ${f.risk}%.` : "";
+  const risk = f && f.risk >= 0 ? ` Chance of a dip in 10 minutes: ${f.risk}%.` : "";
+  const note = f && f.note ? ` <span class="nurse">Nurse's note: ${esc(f.note)}</span>` : "";
+  return risk + note;
 }
 
 function modelLine() {
   if (!advice.watch) return "Advisor starting.";
+  if (advice.watch.age_s < 0) return "Advice starts after five minutes of history. Advice only: this software has no path to any blender.";
   const w = advice.watch, source = w.source === "model"
     ? `Written by the on-board model and checked against the facts: ${w.loops} loop${w.loops === 1 ? "" : "s"}, ${w.tokens} tokens, ${(w.total_ms / 1000).toFixed(0)} s`
     : w.validator === "nothing flagged" ? "Nothing flagged: the rules' own sentences"
@@ -210,6 +223,15 @@ async function refreshAdvice() {
 
 document.getElementById("handover").addEventListener("click", () => {
   fetch("/api/handover", {method: "POST"}).then(refreshAdvice);
+});
+
+document.getElementById("note-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const cot = document.getElementById("note-cot").value, input = document.getElementById("note-text");
+  fetch(`/api/note?cot=${cot}&text=${encodeURIComponent(input.value)}`, {method: "POST"}).then(() => {
+    input.value = "";
+    refreshAdvice();
+  });
 });
 
 refreshHistory(); refresh(); refreshAdvice();

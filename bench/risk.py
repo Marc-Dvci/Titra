@@ -158,8 +158,8 @@ def baseline_scores(rows: list[Row], name: str) -> list[float]:
     return [r.x[index] for r in rows]
 
 
-def evaluate(set_name: str) -> dict[str, Any]:
-    cfg = json.loads(CASES.read_text(encoding="utf-8"))
+def evaluate(set_name: str, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    cfg = cfg or json.loads(CASES.read_text(encoding="utf-8"))
     rows = build(set_name, cfg)
     labels = [r.y for r in rows]
     step = int(cfg["step_s"])
@@ -182,8 +182,10 @@ def evaluate(set_name: str) -> dict[str, Any]:
     return out
 
 
-def write_results(set_name: str, out_dir: Path = ROOT / "eval" / "results") -> dict[str, Any]:
-    result = evaluate(set_name)
+def write_results(
+    set_name: str, out_dir: Path = ROOT / "eval" / "results", cfg: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    result = evaluate(set_name, cfg)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"risk_{set_name}.json").write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")
     return result

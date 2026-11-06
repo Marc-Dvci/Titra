@@ -244,8 +244,8 @@ def evaluate(set_name: str, thresholds: ThresholdsC | None = None, cases_path: P
     return {"set": set_name, "summary": score(rows, window_s), "rows": rows}
 
 
-def write_results(set_name: str, out_dir: Path = ROOT / "eval" / "results") -> dict[str, Any]:
-    result = evaluate(set_name)
+def write_results(set_name: str, out_dir: Path = ROOT / "eval" / "results", cases_path: Path = CASES) -> dict[str, Any]:
+    result = evaluate(set_name, cases_path=cases_path)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"flags_{set_name}.json").write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")
     return result

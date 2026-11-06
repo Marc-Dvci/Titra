@@ -113,3 +113,16 @@ def test_flag_bits_match_the_core(bit: int, name: str) -> None:
     fn.restype = ctypes.c_char_p
     fn.argtypes = [ctypes.c_uint32]
     assert fn(bit).decode() == name
+
+
+@pytest.mark.integration
+def test_a_small_case_set_runs_from_the_simulator_to_a_result_file(tmp_path: Path) -> None:
+    cfg = json.loads((ROOT / "eval" / "flag_cases.json").read_text(encoding="utf-8"))
+    cfg["cases"] = [c for c in cfg["cases"] if c["family"] == "stable"][:1]
+    cfg["seeds"] = {"development": [0], "held_out": [1000]}
+    path = tmp_path / "cases.json"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    result = flags.write_results("development", tmp_path, path)
+    assert result["summary"]["windows"] == 1
+    assert (tmp_path / "flags_development.json").exists()
+    assert flags.facts_dict(flags.compute(flags.to_seconds(trace(100)), 100, 100))["seconds"] == 100
