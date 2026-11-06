@@ -35,9 +35,9 @@ static void three(tf_facts_t *c) {
 }
 
 static const char GOOD[] =
-    "{\"notes\":[{\"cot\":2,\"action\":\"review respiratory support\",\"why\":\"Six dips, 48 seconds at worst, FiO2 from 0.25 to "
-    "0.34.\"},{\"cot\":3,\"action\":\"consider weaning\",\"why\":\"Time in target 88 percent.\"},{\"cot\":1,\"action\":\"no "
-    "action needed\",\"why\":\"Steady at 92 percent.\"}]}";
+    "{\"notes\":[{\"cot\":2,\"action\":\"review respiratory support\",\"why\":\"Frequent dips, 48 seconds at worst, FiO2 from 0.25 to "
+    "0.34.\"},{\"cot\":3,\"action\":\"consider weaning\",\"why\":\"Time in target 88 percent.\"},{\"cot\":1,\"action\":\"nothing "
+    "flagged\",\"why\":\"Time in target 92 percent.\"}]}";
 
 TEST(test_a_good_answer_passes_in_the_models_order) {
     tf_facts_t c[3];
@@ -64,7 +64,7 @@ static ta_result_t with(const char *from, const char *to) {
 
 TEST(test_an_action_outside_the_cots_flags_is_refused) {
     CHECK_EQ_INT(with("consider weaning", "review respiratory support"), TA_ERR_ACTION);
-    CHECK_EQ_INT(with("no action needed", "consider weaning"), TA_ERR_ACTION);
+    CHECK_EQ_INT(with("nothing flagged", "consider weaning"), TA_ERR_ACTION);
     CHECK_EQ_INT(with("review respiratory support", "give more oxygen"), TA_ERR_ACTION);
 }
 
@@ -101,10 +101,11 @@ TEST(test_the_names_fio2_and_spo2_are_not_numbers) {
     c[0].fio2_early_pm = 310;
     c[0].fio2_late_pm = 310;
     c[0].fio2_max_pm = 310;
+    c[0].flags = TF_FLAG_PROBE;
     ta_watch_t w;
-    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":3,\"action\":\"no action needed\",\"why\":\"FiO2 and SpO2 steady, FiO2 at 0.31.\"}]}", c, 1, &w), TA_OK);
-    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":3,\"action\":\"no action needed\",\"why\":\"Steady for 2 hours.\"}]}", c, 1, &w), TA_ERR_NUMBER);
-    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":3,\"action\":\"no action needed\",\"why\":\"FiO27 is wrong.\"}]}", c, 1, &w), TA_ERR_NUMBER);
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":3,\"action\":\"check the probe site\",\"why\":\"FiO2 and SpO2 read, FiO2 at 0.31.\"}]}", c, 1, &w), TA_OK);
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":3,\"action\":\"check the probe site\",\"why\":\"Read for 2 hours.\"}]}", c, 1, &w), TA_ERR_NUMBER);
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":3,\"action\":\"check the probe site\",\"why\":\"FiO27 is wrong.\"}]}", c, 1, &w), TA_ERR_NUMBER);
 }
 
 TEST(test_the_grammar_lets_a_sentence_finish_and_name_fio2) {
@@ -112,13 +113,15 @@ TEST(test_the_grammar_lets_a_sentence_finish_and_name_fio2) {
     three(c);
     char g[16384];
     CHECK(ta_watch_grammar(c, 3, g, sizeof g) > 0);
-    CHECK(strstr(g, "\"FiO2\" | \"SpO2\"") != NULL);
-    CHECK(strstr(g, "w2 ::= (segf | w2num seg) (w2num seg){0,2} w2num? \".\"") != NULL);
+    CHECK(strstr(g, "nm ::= \"FiO2\" | \"SpO2\"") != NULL);
+    /* One parse per word: no repeat inside a repeat. */
+    CHECK(strstr(g, "wd ::= lt | lt? nm lt?\n") != NULL);
+    CHECK(strstr(g, "w2 ::= wds \".\"") != NULL);
     /* Words have one space between them, so a sentence cannot be padded. */
-    CHECK(strstr(g, "seg ::= \" \"? wd (\" \" wd){0,9} \" \"?") != NULL);
+    CHECK(strstr(g, "wds ::= wd (\" \" wd){0,23}") != NULL);
 }
 
-TEST(test_digits_appear_only_inside_phrases_in_the_grammar) {
+TEST(test_the_model_has_no_digits_and_the_facts_keep_their_phrases) {
     tf_facts_t c[1];
     c[0] = cot(1, TF_FLAG_PROBE, 92);
     c[0].risk_pct = 12;
@@ -134,12 +137,11 @@ TEST(test_digits_appear_only_inside_phrases_in_the_grammar) {
     CHECK(strcmp(phrases[6], "FiO2 from 0.25 to 0.34") == 0);
     char g[8192];
     CHECK(ta_watch_grammar(c, 1, g, sizeof g) > 0);
-    /* Bare numbers are gone from the rule that allows them. */
-    const char *rule = strstr(g, "w1num ::=");
-    CHECK(rule != NULL);
-    CHECK(strstr(rule, "| \"92\"") == NULL);
+    /* No phrase with a number reaches the grammar of a sentence. */
+    CHECK(strstr(g, "percent") == NULL);
+    CHECK(strstr(g, "seconds") == NULL);
     /* The rule for free text has no digits at all. */
-    CHECK(strstr(g, "lt ::= [a-zA-Z,;:'()%/-]{1,20}") != NULL);
+    CHECK(strstr(g, "lt ::= [a-zA-Z,;:'()%/-]{1,24}") != NULL);
 }
 
 TEST(test_a_fact_of_zero_is_said_in_words_and_cannot_be_quoted) {
@@ -175,14 +177,15 @@ TEST(test_one_episode_and_one_event_are_singular) {
 
 TEST(test_a_sentence_cannot_deny_what_the_facts_show) {
     tf_facts_t c[1];
-    c[0] = cot(1, 0, 92);
+    c[0] = cot(1, TF_FLAG_PROBE, 92);
     ta_watch_t w;
-    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"no action needed\",\"why\":\"No desaturation episodes today.\"}]}", c, 1, &w), TA_ERR_CLAIM);
-    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"no action needed\",\"why\":\"No probe trouble today.\"}]}", c, 1, &w), TA_ERR_CLAIM);
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"check the probe site\",\"why\":\"No desaturation episodes today.\"}]}", c, 1, &w), TA_ERR_CLAIM);
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"check the probe site\",\"why\":\"No probe trouble today.\"}]}", c, 1, &w), TA_ERR_CLAIM);
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"check the probe site\",\"why\":\"No hold today.\"}]}", c, 1, &w), TA_ERR_CLAIM);
     c[0].desat_episodes = 0;
     c[0].longest_desat_s = 0;
     c[0].probe_events = 0;
-    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"no action needed\",\"why\":\"No desaturation episodes and no probe trouble.\"}]}", c, 1, &w), TA_OK);
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"check the probe site\",\"why\":\"No desaturation episodes and no probe trouble.\"}]}", c, 1, &w), TA_OK);
 }
 
 TEST(test_a_cot_with_no_flag_gets_the_rules_own_sentence) {
@@ -190,13 +193,16 @@ TEST(test_a_cot_with_no_flag_gets_the_rules_own_sentence) {
     c[0] = cot(1, 0, 92);
     char g[4096];
     CHECK(ta_watch_grammar(c, 1, g, sizeof g) > 0);
-    CHECK(strstr(g, "w1 ::= \"No flags; time in target 92 percent.\"") != NULL);
+    CHECK(strstr(g, "w1 ::= \"Time in target 92 percent.\"") != NULL);
     ta_watch_t w;
     ta_fallback_watch(c, 1, &w);
-    CHECK(strcmp(w.notes[0].why, "No flags; time in target 92 percent.") == 0);
+    CHECK(strcmp(w.notes[0].why, "Time in target 92 percent.") == 0);
     char text[512];
-    snprintf(text, sizeof text, "{\"notes\":[{\"cot\":1,\"action\":\"no action needed\",\"why\":\"%s\"}]}", "No flags; time in target 92 percent.");
+    snprintf(text, sizeof text, "{\"notes\":[{\"cot\":1,\"action\":\"nothing flagged\",\"why\":\"%s\"}]}", "Time in target 92 percent.");
     CHECK_EQ_INT(ta_validate_watch(text, c, 1, &w), TA_OK);
+    /* Nor may a model add a word to it, whatever the grammar did. */
+    snprintf(text, sizeof text, "{\"notes\":[{\"cot\":1,\"action\":\"nothing flagged\",\"why\":\"%s\"}]}", "Time in target 92 percent, doing nicely.");
+    CHECK_EQ_INT(ta_validate_watch(text, c, 1, &w), TA_ERR_CLAIM);
 }
 
 TEST(test_the_prompt_lists_cots_in_the_rules_order) {
@@ -253,9 +259,9 @@ static ta_result_t claim(const char *why) {
     c[0].fallback_s = 60;
     c[0].risk_pct = 63;
     c[0].restarts = 1;
-    c[0].flags = 0;
+    c[0].flags = TF_FLAG_PROBE;
     char text[1024];
-    snprintf(text, sizeof text, "{\"notes\":[{\"cot\":2,\"action\":\"no action needed\",\"why\":\"%s\"}]}", why);
+    snprintf(text, sizeof text, "{\"notes\":[{\"cot\":2,\"action\":\"check the probe site\",\"why\":\"%s\"}]}", why);
     ta_watch_t w;
     return ta_validate_watch(text, c, 1, &w);
 }
@@ -267,7 +273,7 @@ TEST(test_a_number_on_its_own_fact_passes_the_claim_check) {
     CHECK_EQ_INT(claim("Lost its signal: 52 probe-off events and 7 percent invalid readings."), TA_OK);
     CHECK_EQ_INT(claim("FiO2 from 0.25 to 0.34."), TA_OK);
     CHECK_EQ_INT(claim("Held for 140 seconds over the last 180 minutes."), TA_OK);
-    CHECK_EQ_INT(claim("After 1 restart, cot 2 is steady."), TA_OK);
+    CHECK_EQ_INT(claim("After 1 restart, cot 2 reads again."), TA_OK);
 }
 
 TEST(test_a_number_on_the_wrong_fact_fails_the_claim_check) {
@@ -277,17 +283,58 @@ TEST(test_a_number_on_the_wrong_fact_fails_the_claim_check) {
     CHECK_EQ_INT(claim("Time in target 63 percent."), TA_ERR_CLAIM);
     CHECK_EQ_INT(claim("With 52 desaturation episodes."), TA_ERR_CLAIM);
     CHECK_EQ_INT(claim("With 11 probe-off events."), TA_ERR_CLAIM);
-    CHECK_EQ_INT(claim("Steady for 11 seconds."), TA_ERR_CLAIM);
+    CHECK_EQ_INT(claim("Read for 11 seconds."), TA_ERR_CLAIM);
     CHECK_EQ_INT(claim("In the next 47 minutes."), TA_ERR_CLAIM);
     CHECK_EQ_INT(claim("FiO2 from 0.34 to 0.25."), TA_ERR_CLAIM);
     CHECK_EQ_INT(claim("FiO2 reached 0.37."), TA_ERR_NUMBER); /* the peak is not one of the facts it may quote */
     CHECK_EQ_INT(claim("Above 86 on oxygen."), TA_ERR_CLAIM);
     CHECK_EQ_INT(claim("At 7 percent."), TA_OK); /* no label beside it: any of the cot's percentages */
-    CHECK_EQ_INT(claim("Cot 11 is steady."), TA_ERR_CLAIM);
+    CHECK_EQ_INT(claim("Cot 11 reads again."), TA_ERR_CLAIM);
+}
+
+TEST(test_reassurance_about_a_flagged_cot_is_refused) {
+    CHECK_EQ_INT(claim("Baby has been stable with oxygen levels within target range and no events."), TA_ERR_CLAIM);
+    CHECK_EQ_INT(claim("Maintained high target time with minimal oxygen needs."), TA_ERR_CLAIM);
+    CHECK_EQ_INT(claim("Stayed in target for the shift."), TA_ERR_CLAIM);
+    CHECK_EQ_INT(claim("No major flags."), TA_ERR_CLAIM);
+    CHECK_EQ_INT(claim("Unstable readings."), TA_ERR_CLAIM);
+    CHECK_EQ_INT(claim("Time in target 86 percent."), TA_OK); /* the fact itself is not reassurance */
+}
+
+TEST(test_a_flag_the_cot_does_not_have_cannot_be_claimed) {
+    /* The cot in claim() has only the probe flag. */
+    CHECK_EQ_INT(claim("Probe trouble over the shift."), TA_OK);
+    CHECK_EQ_INT(claim("Frequent desaturations and probe trouble."), TA_ERR_CLAIM);
+    CHECK_EQ_INT(claim("Many oxygen drops."), TA_ERR_CLAIM);
+    CHECK_EQ_INT(claim("Rising oxygen need."), TA_ERR_CLAIM);
+    CHECK_EQ_INT(claim("A chance to wean."), TA_ERR_CLAIM);
+    CHECK_EQ_INT(claim("Long hold periods."), TA_ERR_CLAIM);
+    CHECK_EQ_INT(claim("High oxygen need."), TA_ERR_CLAIM);
+}
+
+TEST(test_a_number_in_words_is_a_number) {
+    CHECK_EQ_INT(claim("Seven short dips."), TA_ERR_NUMBER);
+    CHECK_EQ_INT(claim("One brief desaturation."), TA_ERR_NUMBER);
+    CHECK_EQ_INT(claim("Someone reseated the probe."), TA_OK); /* a word, not a part of a word */
+}
+
+TEST(test_a_number_cannot_be_played_down) {
+    CHECK_EQ_INT(claim("Despite only 11 desaturation episodes."), TA_ERR_CLAIM);
+    CHECK_EQ_INT(claim("With 11 desaturation episodes."), TA_OK);
+}
+
+TEST(test_what_the_model_wrote_in_development_is_refused) {
+    CHECK_EQ_INT(claim("A chance with low desaturation risk allows safe reduction."), TA_ERR_FORBIDDEN);
+    CHECK_EQ_INT(claim("Frequent probe disconnections with long pauses in oxygen delivery."), TA_ERR_FORBIDDEN);
+    CHECK_EQ_INT(claim("Probe trouble requires immediate attention."), TA_ERR_FORBIDDEN);
+    CHECK_EQ_INT(claim("Probe trouble with high dip risk."), TA_ERR_FORBIDDEN);
+    CHECK_EQ_INT(claim("The nurse must check the probe site."), TA_ERR_FORBIDDEN);
+    CHECK_EQ_INT(claim("Check the probe before FiO2 from 0.25 to 0.34 is adjusted."), TA_ERR_FORBIDDEN);
+    CHECK_EQ_INT(claim("Probe trouble with no oxygen change needed."), TA_ERR_FORBIDDEN);
 }
 
 TEST(test_describing_a_rise_is_allowed) {
-    CHECK_EQ_INT(with("Six dips,", "FiO2 increased, six dips,"), TA_OK);
+    CHECK_EQ_INT(with("Frequent dips,", "FiO2 increased, frequent dips,"), TA_OK);
 }
 
 TEST(test_a_cot_unknown_repeated_or_missing_is_refused) {
@@ -334,7 +381,7 @@ TEST(test_a_healthy_cot_cannot_come_before_a_flagged_one) {
     three(c);
     ta_watch_t w;
     const char swapped[] =
-        "{\"notes\":[{\"cot\":1,\"action\":\"no action needed\",\"why\":\"Steady.\"},{\"cot\":2,\"action\":\"review respiratory "
+        "{\"notes\":[{\"cot\":1,\"action\":\"nothing flagged\",\"why\":\"Time in target 92 percent.\"},{\"cot\":2,\"action\":\"review respiratory "
         "support\",\"why\":\"Dips.\"},{\"cot\":3,\"action\":\"consider weaning\",\"why\":\"Fine.\"}]}";
     CHECK_EQ_INT(ta_validate_watch(swapped, c, 3, &w), TA_ERR_ORDER);
 }
@@ -345,7 +392,7 @@ TEST(test_a_nuisance_flag_cannot_come_before_a_harm_flag) {
     ta_watch_t w;
     const char other[] =
         "{\"notes\":[{\"cot\":3,\"action\":\"consider weaning\",\"why\":\"Fine.\"},{\"cot\":2,\"action\":\"review respiratory "
-        "support\",\"why\":\"Dips.\"},{\"cot\":1,\"action\":\"no action needed\",\"why\":\"Steady.\"}]}";
+        "support\",\"why\":\"Dips.\"},{\"cot\":1,\"action\":\"nothing flagged\",\"why\":\"Time in target 92 percent.\"}]}";
     CHECK_EQ_INT(ta_validate_watch(other, c, 3, &w), TA_ERR_ORDER);
 }
 
@@ -381,7 +428,7 @@ TEST(test_a_sentence_too_long_is_refused) {
     char buf[4096], longwhy[TA_WHY_MAX + 40];
     memset(longwhy, 'a', sizeof longwhy - 1);
     longwhy[sizeof longwhy - 1] = '\0';
-    snprintf(buf, sizeof buf, "{\"notes\":[{\"cot\":1,\"action\":\"no action needed\",\"why\":\"%s\"}]}", longwhy);
+    snprintf(buf, sizeof buf, "{\"notes\":[{\"cot\":1,\"action\":\"nothing flagged\",\"why\":\"%s\"}]}", longwhy);
     ta_watch_t w;
     CHECK_EQ_INT(ta_validate_watch(buf, c, 1, &w), TA_ERR_TOO_LONG);
 }
@@ -411,13 +458,14 @@ TEST(test_the_forecast_is_a_fact_the_model_may_quote) {
     tf_facts_t flagged = c[0];
     flagged.flags = TF_FLAG_PROBE;
     CHECK(ta_watch_grammar(&flagged, 1, g, sizeof g) > 0);
-    CHECK(strstr(g, "\"37 percent chance of a dip\"") != NULL);
+    CHECK(strstr(g, "37 percent") == NULL); /* the prompt quotes it and the page shows it; the model does not write it */
     ta_watch_t w;
-    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"no action needed\",\"why\":\"A 37 percent chance of a dip.\"}]}", c, 1, &w), TA_OK);
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"check the probe site\",\"why\":\"A 37 percent chance of a dip.\"}]}", &flagged, 1, &w), TA_OK);
     c[0].risk_pct = -1;
+    flagged.risk_pct = -1;
     CHECK(ta_watch_prompt(c, 1, NULL, p, sizeof p) > 0);
     CHECK(strstr(p, "chance") == NULL);
-    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"no action needed\",\"why\":\"A 37 percent chance of a dip.\"}]}", c, 1, &w), TA_ERR_NUMBER);
+    CHECK_EQ_INT(ta_validate_watch("{\"notes\":[{\"cot\":1,\"action\":\"check the probe site\",\"why\":\"A 37 percent chance of a dip.\"}]}", &flagged, 1, &w), TA_ERR_NUMBER);
 }
 
 TEST(test_the_prompt_carries_the_facts_flags_and_actions) {
@@ -465,18 +513,10 @@ TEST(test_the_grammar_lists_only_that_cots_numbers_and_actions) {
     c[0].time_in_target_pct = 91;
     char g[16384];
     CHECK(ta_watch_grammar(c, 3, g, sizeof g) > 0);
-    const char *w2 = strstr(g, "w2num ::=");
-    CHECK(w2 != NULL);
-    char line[1024];
-    const size_t n = (size_t)(strchr(w2, '\n') - w2);
-    memcpy(line, w2, n);
-    line[n] = '\0';
-    CHECK(strstr(line, "91 percent") == NULL);
-    CHECK(strstr(line, "\"time in target 71 percent\"") != NULL);
     /* Cot 1 has no flag: its sentence is the rules' own. */
-    CHECK(strstr(g, "w1 ::= \"No flags; time in target 91 percent.\"") != NULL);
+    CHECK(strstr(g, "w1 ::= \"Time in target 91 percent.\"") != NULL);
     const char *a1 = strstr(g, "a1 ::= ");
-    CHECK(a1 != NULL && strncmp(a1, "a1 ::= \"no action needed\"\n", 26) == 0);
+    CHECK(a1 != NULL && strncmp(a1, "a1 ::= \"nothing flagged\"\n", 25) == 0);
 }
 
 TEST(test_the_grammar_writes_every_cot_once) {
@@ -512,27 +552,80 @@ TEST(test_token_bounds_cover_the_longest_sentence) {
     CHECK(ta_watch_max_tokens(3) > ta_watch_max_tokens(1));
     CHECK(ta_handover_max_tokens(3) > ta_handover_max_tokens(1));
     CHECK(ta_incident_max_tokens() > 50);
-    CHECK(ta_incident_max_tokens() < ta_watch_max_tokens(1) + 20);
+    CHECK(ta_watch_max_tokens(1) > 50);
 }
 
-TEST(test_the_handover_keeps_cot_order_and_checks_numbers) {
-    tf_facts_t c[2];
+TEST(test_the_handover_is_written_only_for_flagged_cots_in_cot_order) {
+    tf_facts_t c[3];
     c[0] = cot(1, 0, 92);
     c[1] = cot(2, TF_FLAG_DESATS, 71);
+    c[2] = cot(3, TF_FLAG_PROBE, 80);
     ta_watch_t w;
-    const char good[] = "{\"cots\":[{\"cot\":1,\"summary\":\"Calm, 92 percent.\"},{\"cot\":2,\"summary\":\"Six dips, 71 percent.\"}]}";
-    CHECK_EQ_INT(ta_validate_handover(good, c, 2, &w), TA_OK);
+    const char good[] = "{\"cots\":[{\"cot\":2,\"summary\":\"Frequent dips, 71 percent.\"},{\"cot\":3,\"summary\":\"Probe trouble.\"}]}";
+    CHECK_EQ_INT(ta_validate_handover(good, c, 3, &w), TA_OK);
     CHECK_EQ_INT(w.n, 2);
-    const char swapped[] = "{\"cots\":[{\"cot\":2,\"summary\":\"Dips.\"},{\"cot\":1,\"summary\":\"Calm.\"}]}";
-    CHECK_EQ_INT(ta_validate_handover(swapped, c, 2, &w), TA_ERR_COTS);
-    const char number[] = "{\"cots\":[{\"cot\":1,\"summary\":\"Calm, 71 percent.\"},{\"cot\":2,\"summary\":\"Dips.\"}]}";
-    CHECK_EQ_INT(ta_validate_handover(number, c, 2, &w), TA_ERR_NUMBER);
-    CHECK_EQ_INT(ta_validate_handover("{}", c, 2, &w), TA_ERR_SCHEMA);
+    CHECK_EQ_INT(w.notes[1].cot, 3);
+    const char swapped[] = "{\"cots\":[{\"cot\":3,\"summary\":\"Probe trouble.\"},{\"cot\":2,\"summary\":\"Dips.\"}]}";
+    CHECK_EQ_INT(ta_validate_handover(swapped, c, 3, &w), TA_ERR_COTS);
+    const char clear[] = "{\"cots\":[{\"cot\":1,\"summary\":\"Nothing happened.\"},{\"cot\":2,\"summary\":\"Dips.\"},{\"cot\":3,\"summary\":\"Probe.\"}]}";
+    CHECK_EQ_INT(ta_validate_handover(clear, c, 3, &w), TA_ERR_COTS);
+    const char extra[] = "{\"cots\":[{\"cot\":2,\"summary\":\"Dips.\"},{\"cot\":3,\"summary\":\"Probe.\"},{\"cot\":1,\"summary\":\"Fine.\"}]}";
+    CHECK_EQ_INT(ta_validate_handover(extra, c, 3, &w), TA_ERR_COTS);
+    const char number[] = "{\"cots\":[{\"cot\":2,\"summary\":\"Dips, 80 percent.\"},{\"cot\":3,\"summary\":\"Probe.\"}]}";
+    CHECK_EQ_INT(ta_validate_handover(number, c, 3, &w), TA_ERR_NUMBER);
+    CHECK_EQ_INT(ta_validate_handover("{}", c, 3, &w), TA_ERR_SCHEMA);
     char p[4096], g[16384];
-    CHECK(ta_handover_prompt(c, 2, p, sizeof p) > 0);
+    CHECK(ta_handover_prompt(c, 3, p, sizeof p) > 0);
     CHECK(strstr(p, "shift handover") != NULL);
-    CHECK(ta_handover_grammar(c, 2, g, sizeof g) > 0);
-    CHECK(strstr(g, "root ::= \"{\\\"cots\\\":[\" h1 \",\" h2 \"]}\"\n") != NULL);
+    CHECK(strstr(p, "Cot 1,") == NULL);
+    CHECK(strstr(p, "Cot 2,") != NULL);
+    CHECK(ta_handover_grammar(c, 3, g, sizeof g) > 0);
+    CHECK(strstr(g, "root ::= \"{\\\"cots\\\":[\" h2 \",\" h3 \"]}\"\n") != NULL);
+    CHECK(strstr(g, "h1 ::=") == NULL);
+}
+
+TEST(test_with_no_flag_the_handover_has_nothing_to_ask) {
+    tf_facts_t c[2];
+    c[0] = cot(1, 0, 92);
+    c[1] = cot(2, 0, 88);
+    char p[4096], g[4096];
+    CHECK_EQ_INT(ta_handover_prompt(c, 2, p, sizeof p), -1);
+    CHECK_EQ_INT(ta_handover_grammar(c, 2, g, sizeof g), -1);
+}
+
+TEST(test_the_handover_record_holds_every_fact_in_fixed_words) {
+    tf_facts_t f = cot(1, TF_FLAG_DESATS | TF_FLAG_HOLD_FALLBACK, 65);
+    f.risk_pct = 37;
+    f.fallback_s = 9;
+    char t[TA_FACTS_MAX];
+    CHECK(ta_handover_facts(&f, t, sizeof t) > 0);
+    CHECK(strstr(t, "Last 60 minutes: time in target 65 percent") != NULL);
+    CHECK(strstr(t, "6 desaturation episodes; longest 48 seconds") != NULL);
+    CHECK(strstr(t, "FiO2 from 0.25 to 0.34") != NULL);
+    CHECK(strstr(t, "14 seconds in hold") != NULL);
+    CHECK(strstr(t, "9 seconds in fallback") != NULL);
+    CHECK(strstr(t, "Flags: frequent desaturations, hold or fallback.") != NULL);
+    /* A forecast is for now; a record is for the shift. */
+    CHECK(strstr(t, "chance") == NULL);
+    tf_facts_t quiet = cot(2, 0, 92);
+    quiet.desat_episodes = 0;
+    quiet.probe_events = 0;
+    CHECK(ta_handover_facts(&quiet, t, sizeof t) > 0);
+    CHECK(strstr(t, "no desaturation episodes; no probe-off events. Flags: none.") != NULL);
+    CHECK_EQ_INT(ta_handover_facts(&f, t, 8), -1);
+    /* The worst cot still fits. */
+    tf_facts_t worst = cot(3, 0x7f, 100);
+    worst.seconds = 14400;
+    worst.desat_episodes = 9999;
+    worst.longest_desat_s = 9999;
+    worst.probe_events = 9999;
+    worst.invalid_pct = 100;
+    worst.hold_s = 14400;
+    worst.fallback_s = 14400;
+    worst.restarts = 99;
+    worst.above_95_on_o2_pct = 100;
+    worst.below_85_pct = 100;
+    CHECK(ta_handover_facts(&worst, t, sizeof t) > 0);
 }
 
 TEST(test_the_incident_note_is_checked_like_the_rest) {
@@ -547,6 +640,11 @@ TEST(test_the_incident_note_is_checked_like_the_rest) {
     CHECK(strstr(note, "stayed at 0.31") != NULL);
     CHECK_EQ_INT(ta_validate_incident("{\"note\":\"Back in 9 seconds.\"}", &inc, note, sizeof note), TA_ERR_NUMBER);
     CHECK_EQ_INT(ta_validate_incident("{\"note\":\"Increase oxygen.\"}", &inc, note, sizeof note), TA_ERR_FORBIDDEN);
+    CHECK_EQ_INT(ta_validate_incident("{\"note\":\"Back in two seconds.\"}", &inc, note, sizeof note), TA_ERR_NUMBER);
+    CHECK_EQ_INT(ta_validate_incident("{\"note\":\"FiO2 moved during the 2 seconds.\"}", &inc, note, sizeof note), TA_ERR_CLAIM);
+    const ta_incident_t moved = {2, "the link to the blender was lost", "kept the blender on its last command", 9, 310, 350};
+    CHECK_EQ_INT(ta_validate_incident("{\"note\":\"FiO2 did not move in 9 seconds.\"}", &moved, note, sizeof note), TA_ERR_CLAIM);
+    CHECK_EQ_INT(ta_validate_incident("{\"note\":\"FiO2 moved from 0.31 to 0.35 in 9 seconds.\"}", &moved, note, sizeof note), TA_OK);
     CHECK_EQ_INT(ta_validate_incident("{\"note\":\"\"}", &inc, note, sizeof note), TA_ERR_SCHEMA);
     CHECK_EQ_INT(ta_validate_incident("{\"note\":\"ok\"} x", &inc, note, sizeof note), TA_ERR_SCHEMA);
     CHECK_EQ_INT(ta_validate_incident(NULL, &inc, note, sizeof note), TA_ERR_SCHEMA);

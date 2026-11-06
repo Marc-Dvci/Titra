@@ -12,14 +12,19 @@
 #define WHY_WORDS_FIRST 18 /* words before the first number in a sentence */
 #define WHY_WORDS_NEXT 10  /* words after each number */
 #define WHY_NUMBERS 3      /* numbers in one sentence */
+#define SENTENCE_WORDS 24  /* a model's sentence: above what the prompt asks, so the cap rarely cuts a sentence short */
 
 static const char SYSTEM_PREFIX[] =
     "You are the advice module of Titra, an oxygen controller for preterm babies on CPAP. One nurse covers several cots "
     "on a night shift. The controller sets the oxygen by itself and you never do. You read facts about each cot, decide "
     "which cot needs the nurse first, and write one short plain sentence about each cot.\n"
     "Rules:\n"
-    "- Quote a number only as the whole phrase it has in that cot's facts. Use few numbers.\n"
-    "- Say what the flags mean for the nurse.\n"
+    "- Write no numbers, in digits or in words: the nurse sees the facts beside your sentence.\n"
+    "- Say what the flags mean for the nurse, and only what the flags and facts say. Say nothing about a flag the cot does "
+    "not have.\n"
+    "- Write calmly and say should, never must. Never write urgent, immediate, severe, stable, unstable, safe or adjust: "
+    "alarms are handled elsewhere.\n"
+    "- Hold and fallback mean the controller kept FiO2 where it was while the reading was unreliable. Oxygen keeps flowing.\n"
     "- Cots with hold or fallback, frequent desaturations, high need or rising need come first, then cots with other flags, "
     "then cots with no flags.\n"
     "- Choose the action only from that cot's allowed actions.\n"
@@ -183,19 +188,36 @@ int ta_cot_phrases(const tf_facts_t *f, char out[][TA_PHRASE_MAX], int cap) {
     return n;
 }
 
-static void put_facts(sb_t *b, const tf_facts_t *f) {
+static void put_phrases(sb_t *b, const tf_facts_t *f, int with_forecast) {
     char phrases[TA_PHRASES_MAX][TA_PHRASE_MAX];
     const int n = ta_cot_phrases(f, phrases, TA_PHRASES_MAX);
-    sb_put(b, "Cot %d, last %d minutes: ", f->cot, f->seconds / 60);
     int listed = 0;
     for (int i = 0; i < n; i++) {
         /* The other forms of a sentence's start are for the grammar. */
         if (phrases[i][0] == 'T' || strncmp(phrases[i], "Cot ", 4) == 0 || strncmp(phrases[i], "cot ", 4) == 0) continue;
+        if (!with_forecast && strstr(phrases[i], "chance") != NULL) continue;
         sb_put(b, "%s%s", listed ? "; " : "", phrases[i]);
         listed = 1;
     }
     if (f->desat_episodes == 0) sb_put(b, "; no desaturation episodes");
     if (f->probe_events == 0) sb_put(b, "; no probe-off events");
+}
+
+/* A forecast is for now, and a record is for the whole shift: the record leaves it out. */
+int ta_handover_facts(const tf_facts_t *f, char *out, size_t cap) {
+    sb_t b;
+    sb_init(&b, out, cap);
+    sb_put(&b, "Last %d minutes: ", f->seconds / 60);
+    put_phrases(&b, f, 0);
+    sb_put(&b, ". Flags: ");
+    put_flag_names(&b, f->flags);
+    sb_put(&b, ".");
+    return sb_done(&b);
+}
+
+static void put_facts(sb_t *b, const tf_facts_t *f) {
+    sb_put(b, "Cot %d, last %d minutes: ", f->cot, f->seconds / 60);
+    put_phrases(b, f, 1);
     sb_put(b, ".\n");
     sb_put(b, "Flags: ");
     put_flag_names(b, f->flags);
@@ -252,18 +274,25 @@ int ta_watch_prompt(const tf_facts_t *cots, int n, const char *const *notes, cha
     return sb_done(&b);
 }
 
+static int count_flagged(const tf_facts_t *cots, int n) {
+    int count = 0;
+    for (int i = 0; i < n; i++) count += cots[i].flags != 0;
+    return count;
+}
+
 int ta_handover_prompt(const tf_facts_t *cots, int n, char *out, size_t cap) {
     sb_t b;
     sb_init(&b, out, cap);
-    sb_put(&b, "Write the shift handover.\n\n");
+    if (n < 1 || n > TA_MAX_COTS || count_flagged(cots, n) == 0) return -1;
+    sb_put(&b, "Write the shift handover for the next nurse. These cots have flags.\n\n");
     for (int i = 0; i < n; i++) {
+        if (cots[i].flags == 0) continue;
         put_facts(&b, &cots[i]);
         sb_put(&b, "\n");
     }
     sb_put(&b,
-           "For each cot in order, write one sentence of at most 20 words for the next nurse with what happened on this "
-           "shift, as JSON: {\"cots\":[{\"cot\":N,\"summary\":\"one sentence\"}]}. Start each sentence with what happened, "
-           "not with the cot's number.");
+           "For each cot above, in order, write one sentence of at most 15 words saying what its flags meant on this shift, "
+           "as JSON: {\"cots\":[{\"cot\":N,\"summary\":\"one sentence\"}]}. Start each sentence with what happened.");
     return sb_done(&b);
 }
 
@@ -301,12 +330,28 @@ static void gr_text_rule(sb_t *b, const char *name, const char (*phrases)[TA_PHR
     sb_put(b, "\n%s ::= (segf | %snum seg) (%snum seg){0,%d} %snum? \".\"\n", name, name, name, WHY_NUMBERS - 1, name);
 }
 
-/* Words, one space between them: a model cannot pad a sentence with spaces when the word it wants is refused. */
-static void gr_common(sb_t *b) {
+/* Words, one space between them: a model cannot pad a sentence with spaces when the word it wants is refused. A word has
+ * one parse: a repeated run of letters inside a repeat has so many that the sampler's stacks grow without limit on a long
+ * run, and the server stalls. */
+static void gr_words(sb_t *b) {
+    sb_put(b, "wd ::= lt | lt? nm lt?\n");
+    sb_put(b, "nm ::= \"FiO2\" | \"SpO2\"\n");
+    sb_put(b, "lt ::= [a-zA-Z,;:'()%%/-]{1,24}\n");
+}
+
+/* The sentence of a watch or a handover: words and one full stop, with no digit anywhere. A model that reaches for a number
+ * in a grammar that only allows whole phrases lands in whichever phrase fits and writes nonsense that passes every check,
+ * so here it has no numbers at all, and C writes every number on the page beside the sentence. */
+static void gr_sentences(sb_t *b) {
+    sb_put(b, "wds ::= wd (\" \" wd){0,%d}\n", SENTENCE_WORDS - 1);
+    gr_words(b);
+}
+
+/* The incident note quotes its duration and FiO2, so it keeps whole phrases and the segments between them. */
+static void gr_segments(sb_t *b) {
     sb_put(b, "segf ::= \" \"? wd (\" \" wd){0,%d} \" \"?\n", WHY_WORDS_FIRST - 1);
     sb_put(b, "seg ::= \" \"? wd (\" \" wd){0,%d} \" \"?\n", WHY_WORDS_NEXT - 1);
-    sb_put(b, "wd ::= (lt | \"FiO2\" | \"SpO2\"){1,6}\n");
-    sb_put(b, "lt ::= [a-zA-Z,;:'()%%/-]{1,20}\n");
+    gr_words(b);
 }
 
 static void gr_note_rules(sb_t *b, const tf_facts_t *f) {
@@ -314,11 +359,9 @@ static void gr_note_rules(sb_t *b, const tf_facts_t *f) {
     snprintf(name, sizeof name, "w%d", f->cot);
     if (f->flags == 0) {
         /* A cot with no flag gets the rules' own sentence: the model has nothing to add, and nothing to get wrong. */
-        sb_put(b, "%s ::= \"No flags; time in target %d percent.\"\n", name, f->time_in_target_pct);
+        sb_put(b, "%s ::= \"Time in target %d percent.\"\n", name, f->time_in_target_pct);
     } else {
-        char phrases[TA_PHRASES_MAX][TA_PHRASE_MAX];
-        const int count = ta_cot_phrases(f, phrases, TA_PHRASES_MAX);
-        gr_text_rule(b, name, (const char (*)[TA_PHRASE_MAX])phrases, count);
+        sb_put(b, "%s ::= wds \".\"\n", name);
     }
     const char *allowed[6];
     const int m = ta_allowed_actions(f->flags, allowed, 6);
@@ -366,26 +409,27 @@ int ta_watch_grammar(const tf_facts_t *cots, int n, char *out, size_t cap) {
         sb_put(&b, "\n");
     }
     for (int i = 0; i < n; i++) gr_note_rules(&b, &cots[i]);
-    gr_common(&b);
+    gr_sentences(&b);
     return sb_done(&b);
 }
 
 int ta_handover_grammar(const tf_facts_t *cots, int n, char *out, size_t cap) {
     sb_t b;
     sb_init(&b, out, cap);
-    if (n < 1 || n > TA_MAX_COTS) return -1;
+    if (n < 1 || n > TA_MAX_COTS || count_flagged(cots, n) == 0) return -1;
     sb_put(&b, "root ::= \"{\\\"cots\\\":[\"");
-    for (int i = 0; i < n; i++) sb_put(&b, " %sh%d", i ? "\",\" " : "", cots[i].cot);
+    int first = 1;
+    for (int i = 0; i < n; i++) {
+        if (cots[i].flags == 0) continue;
+        sb_put(&b, " %sh%d", first ? "" : "\",\" ", cots[i].cot);
+        first = 0;
+    }
     sb_put(&b, " \"]}\"\n");
     for (int i = 0; i < n; i++) {
-        char name[16];
-        snprintf(name, sizeof name, "w%d", cots[i].cot);
-        char phrases[TA_PHRASES_MAX][TA_PHRASE_MAX];
-        const int count = ta_cot_phrases(&cots[i], phrases, TA_PHRASES_MAX);
-        gr_text_rule(&b, name, (const char (*)[TA_PHRASE_MAX])phrases, count);
-        sb_put(&b, "h%d ::= \"{\\\"cot\\\":%d,\\\"summary\\\":\\\"\" w%d \"\\\"}\"\n", cots[i].cot, cots[i].cot, cots[i].cot);
+        if (cots[i].flags == 0) continue;
+        sb_put(&b, "h%d ::= \"{\\\"cot\\\":%d,\\\"summary\\\":\\\"\" wds \".\\\"}\"\n", cots[i].cot, cots[i].cot);
     }
-    gr_common(&b);
+    gr_sentences(&b);
     return sb_done(&b);
 }
 
@@ -408,14 +452,15 @@ int ta_incident_grammar(const ta_incident_t *inc, char *out, size_t cap) {
     }
     sb_put(&b, "root ::= \"{\\\"note\\\":\\\"\" w \"\\\"}\"\n");
     gr_text_rule(&b, "w", (const char (*)[TA_PHRASE_MAX])phrases, k);
-    gr_common(&b);
+    gr_segments(&b);
     return sb_done(&b);
 }
 
 /* The longest sentence the grammar allows, at the worst plausible 2.5 characters a token, plus the JSON around it. */
 static int sentence_tokens(void) { return (WHY_WORDS_FIRST + (WHY_NUMBERS - 1) * WHY_WORDS_NEXT) * 2 + WHY_NUMBERS * 12 + 1; }
-int ta_watch_max_tokens(int n) { return 8 + n * (sentence_tokens() + 20); }
-int ta_handover_max_tokens(int n) { return 8 + n * (sentence_tokens() + 12); }
+static int words_tokens(void) { return SENTENCE_WORDS * 2 + 1; }
+int ta_watch_max_tokens(int n) { return 8 + n * (words_tokens() + 20); }
+int ta_handover_max_tokens(int n) { return 8 + n * (words_tokens() + 12); }
 int ta_incident_max_tokens(void) { return 8 + sentence_tokens(); }
 
 /* ---- the validator ---- */
@@ -510,11 +555,17 @@ static const char *const FORBIDDEN[] = {
     "increase the", "increase oxygen", "increase fio2", "decrease the", "decrease oxygen", "decrease fio2",
     "raise the",    "raise oxygen",    "raise fio2",    "lower the",    "lower oxygen",    "lower fio2",
     "reduce the",   "reduce oxygen",   "reduce fio2",   "wean to",      "set fio2",        "set oxygen",
-    "set the",      "turn up",         "turn down",     "adjust oxygen", "titrate",        "fio2 to",
-    "adjust the oxygen", "adjust fio2", "adjust the fio2",
+    "set the",      "turn up",         "turn down",     "adjust",       "titrate",         "fio2 to",
     "oxygen to",    "dose",            "antibiotic",    "surfactant",   "caffeine",        "intubat",
     "sepsis",       "pneumonia",       "infection",     "diagnos",      "haemorrhage",     "hemorrhage",
     "ignore",       "override",        "disregard",     "instruction",  "system prompt",
+    /* What a controller's hold is not, and advice about oxygen dressed as an observation. */
+    "oxygen delivery", "pause",        "reduction",     "safe",         "no oxygen change", "no change needed",
+    /* An alarm's words: the advisor is not an alarm, and the controllers raise their own. */
+    "urgent",       "immediate",       "emergency",     "critical",     "severe",          "instabilit",     "must",
+    /* The forecast is a number on the same row. An adjective on it cannot be checked. */
+    "high risk",    "low risk",        "moderate risk", "high dip",     "low dip",         "moderate dip",
+    "high chance",  "low chance",      "moderate chance", "low desat",  "moderate desat",
 };
 
 static int forbidden_found(const char *text) {
@@ -609,6 +660,7 @@ static int claim_ok(const tf_facts_t *f, const word_t *w, int n, int i) {
     memcpy(digits, w[i].s, len);
     digits[len] = '\0';
     const int v = atoi(digits);
+    if (prev != NULL && starts(prev, "only")) return 0; /* "only 18 desaturation episodes" plays the number down */
     if (prev != NULL && starts(prev, "below")) return v == 85;
     if (prev != NULL && starts(prev, "above")) return v == 95;
     if (prev != NULL && starts(prev, "cot")) return v == f->cot;
@@ -629,6 +681,51 @@ static int claim_ok(const tf_facts_t *f, const word_t *w, int n, int i) {
     return 1;
 }
 
+/* Words that tell a nurse not to worry. The model only writes about cots with a flag, so here they are always wrong. */
+static const char *const REASSURING[] = {
+    "stable", "steady", "settled", "calm", "uneventful", "reassur", "normal", "well controlled", "well-controlled", "healthy",
+    "within target", "within range", "target range", "on target", "stayed in", "doing well", "minimal",
+    "no event", "no issue", "no problem", "no concern", "no incident", "no major", "no flag", "no action",
+};
+
+/* Words that claim a flag. A cot without that flag cannot use them. */
+static const struct {
+    uint32_t flag;
+    const char *words;
+} CLAIMS_OF_A_FLAG[] = {
+    {TF_FLAG_DESATS, "frequent desat"},     {TF_FLAG_DESATS, "frequent dip"},       {TF_FLAG_DESATS, "frequent drop"},
+    {TF_FLAG_DESATS, "many desat"},         {TF_FLAG_DESATS, "many dip"},           {TF_FLAG_DESATS, "many drop"},
+    {TF_FLAG_DESATS, "many oxygen"},        {TF_FLAG_DESATS, "repeated"},           {TF_FLAG_DESATS, "recurrent"},
+    {TF_FLAG_PROBE, "probe trouble"},       {TF_FLAG_PROBE, "probe issue"},         {TF_FLAG_PROBE, "probe problem"},
+    {TF_FLAG_PROBE, "frequent probe"},      {TF_FLAG_PROBE, "many probe"},          {TF_FLAG_PROBE, "significant probe"},
+    {TF_FLAG_RISING_NEED, "rising"},        {TF_FLAG_RISING_NEED, "increasing"},    {TF_FLAG_RISING_NEED, "climbing"},
+    {TF_FLAG_RISING_NEED, "need rose"},     {TF_FLAG_RISING_NEED, "need increased"},
+    {TF_FLAG_WEAN, "wean"},
+    {TF_FLAG_HOLD_FALLBACK, "hold or fallback"}, {TF_FLAG_HOLD_FALLBACK, "long hold"},   {TF_FLAG_HOLD_FALLBACK, "prolonged hold"},
+    {TF_FLAG_HOLD_FALLBACK, "frequent hold"},    {TF_FLAG_HOLD_FALLBACK, "long fallback"}, {TF_FLAG_HOLD_FALLBACK, "prolonged fallback"},
+    {TF_FLAG_HIGH_NEED, "high need"},       {TF_FLAG_HIGH_NEED, "high oxygen"},
+};
+
+/* A number in words would walk around every check on digits. */
+static const char *const NUMBER_WORDS[] = {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "dozen"};
+
+static int word_is(const word_t *w, const char *text) { return w->len == strlen(text) && strncmp(w->s, text, w->len) == 0; }
+
+static int number_words_found(const char *text) {
+    char low[TA_WHY_MAX + 1];
+    size_t n = 0;
+    for (const char *p = text; *p && n < TA_WHY_MAX; p++) low[n++] = (char)tolower((unsigned char)*p);
+    low[n] = '\0';
+    word_t w[CLAIM_WORDS];
+    const int count = split_words(low, w, CLAIM_WORDS);
+    for (int i = 0; i < count; i++) {
+        for (size_t k = 0; k < sizeof NUMBER_WORDS / sizeof NUMBER_WORDS[0]; k++) {
+            if (word_is(&w[i], NUMBER_WORDS[k])) return 1;
+        }
+    }
+    return 0;
+}
+
 static int claims_ok(const char *text, const tf_facts_t *f) {
     char low[TA_WHY_MAX + 1];
     size_t n = 0;
@@ -636,6 +733,15 @@ static int claims_ok(const char *text, const tf_facts_t *f) {
     low[n] = '\0';
     if (f->desat_episodes > 0 && (strstr(low, "no desat") != NULL || strstr(low, "no dip") != NULL || strstr(low, "without desat") != NULL)) return 0;
     if (f->probe_events > 0 && strstr(low, "no probe") != NULL) return 0;
+    if (f->hold_s > 0 && strstr(low, "no hold") != NULL) return 0;
+    if (f->fallback_s > 0 && strstr(low, "no fallback") != NULL) return 0;
+    if (f->restarts > 0 && strstr(low, "no restart") != NULL) return 0;
+    for (size_t i = 0; i < sizeof REASSURING / sizeof REASSURING[0]; i++) {
+        if (strstr(low, REASSURING[i]) != NULL) return 0;
+    }
+    for (size_t i = 0; i < sizeof CLAIMS_OF_A_FLAG / sizeof CLAIMS_OF_A_FLAG[0]; i++) {
+        if (!(f->flags & CLAIMS_OF_A_FLAG[i].flag) && strstr(low, CLAIMS_OF_A_FLAG[i].words) != NULL) return 0;
+    }
     word_t w[CLAIM_WORDS];
     const int count = split_words(low, w, CLAIM_WORDS);
     for (int i = 0; i < count; i++) {
@@ -650,8 +756,14 @@ static ta_result_t check_text(const char *why, const tf_facts_t *f) {
     if (strlen(why) > TA_WHY_MAX) return TA_ERR_TOO_LONG;
     char nums[MAX_NUMBERS][12];
     const int count = ta_cot_numbers(f, nums, MAX_NUMBERS);
-    if (!numbers_ok(why, (const char (*)[12])nums, count)) return TA_ERR_NUMBER;
+    if (!numbers_ok(why, (const char (*)[12])nums, count) || number_words_found(why)) return TA_ERR_NUMBER;
     if (forbidden_found(why)) return TA_ERR_FORBIDDEN;
+    if (f->flags == 0) {
+        /* The rules' own sentence, whole: a cot with no flag has nothing for a model to say. */
+        char own[64];
+        snprintf(own, sizeof own, "Time in target %d percent.", f->time_in_target_pct);
+        return strcmp(why, own) == 0 ? TA_OK : TA_ERR_CLAIM;
+    }
     if (!claims_ok(why, f)) return TA_ERR_CLAIM;
     return TA_OK;
 }
@@ -702,9 +814,11 @@ ta_result_t ta_validate_handover(const char *text, const tf_facts_t *cots, int n
     if (text == NULL || n < 1 || n > TA_MAX_COTS) return TA_ERR_SCHEMA;
     const char *p = text;
     if (!match(&p, "{\"cots\":[")) return TA_ERR_SCHEMA;
+    int written = 0;
     for (int i = 0; i < n; i++) {
-        ta_note_t *note = &out->notes[i];
-        if (i > 0 && !match(&p, ",")) return TA_ERR_COTS;
+        if (cots[i].flags == 0) continue;
+        ta_note_t *note = &out->notes[written];
+        if (written > 0 && !match(&p, ",")) return TA_ERR_COTS;
         if (!match(&p, "{\"cot\":") || !read_int(&p, &note->cot)) return TA_ERR_SCHEMA;
         if (note->cot != cots[i].cot) return TA_ERR_COTS;
         if (!match(&p, ",\"summary\":\"")) return TA_ERR_SCHEMA;
@@ -714,9 +828,10 @@ ta_result_t ta_validate_handover(const char *text, const tf_facts_t *cots, int n
         const ta_result_t r = check_text(why, &cots[i]);
         if (r != TA_OK) return r;
         copy_text(note->why, sizeof note->why, why);
+        written++;
     }
-    if (!match(&p, "]}") || *p != '\0') return TA_ERR_SCHEMA;
-    out->n = n;
+    if (!match(&p, "]}") || *p != '\0') return *p == ',' ? TA_ERR_COTS : TA_ERR_SCHEMA;
+    out->n = written;
     return TA_OK;
 }
 
@@ -734,7 +849,16 @@ ta_result_t ta_validate_incident(const char *text, const ta_incident_t *inc, cha
     int k = 0;
     incident_numbers(inc, nums, 6, &k);
     if (!numbers_ok(why, (const char (*)[12])nums, k)) return TA_ERR_NUMBER;
+    if (number_words_found(why)) return TA_ERR_NUMBER;
     if (forbidden_found(why)) return TA_ERR_FORBIDDEN;
+    /* Whether FiO2 moved is the one thing the engineer reads this for. */
+    char low[TA_WHY_MAX + 1];
+    size_t m = 0;
+    for (const char *t = why; *t && m < TA_WHY_MAX; t++) low[m++] = (char)tolower((unsigned char)*t);
+    low[m] = '\0';
+    const int moved = inc->fio2_before_pm != inc->fio2_after_pm;
+    if (moved && (strstr(low, "stayed") != NULL || strstr(low, "unchanged") != NULL || strstr(low, "did not") != NULL || strstr(low, "no change") != NULL)) return TA_ERR_CLAIM;
+    if (!moved && (strstr(low, "moved") != NULL || strstr(low, "rose") != NULL || strstr(low, "fell") != NULL || strstr(low, "increased") != NULL || strstr(low, "decreased") != NULL)) return TA_ERR_CLAIM;
     copy_text(note, cap, why);
     return TA_OK;
 }
@@ -758,7 +882,7 @@ void ta_fallback_watch(const tf_facts_t *cots, int n, ta_watch_t *out) {
         sb_t b;
         sb_init(&b, note->why, sizeof note->why);
         if (f->flags == 0) {
-            sb_put(&b, "No flags; time in target %d percent.", f->time_in_target_pct);
+            sb_put(&b, "Time in target %d percent.", f->time_in_target_pct);
         } else {
             sb_put(&b, "Time in target %d percent. Flags: ", f->time_in_target_pct);
             put_flag_names(&b, f->flags);

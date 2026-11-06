@@ -43,7 +43,7 @@ GOOD = json.dumps(
         "notes": [
             {"cot": 2, "action": "review respiratory support", "why": "Need rising from 0.25 to 0.34, with 6 dips."},
             {"cot": 3, "action": "check the probe site", "why": "The probe signal was lost 7 times."},
-            {"cot": 1, "action": "no action needed", "why": "Steady."},
+            {"cot": 1, "action": "nothing flagged", "why": "Time in target 90 percent."},
         ]
     },
     separators=(",", ":"),
@@ -60,7 +60,7 @@ def test_a_good_answer_passes_the_c_validator() -> None:
     [
         ("not json", "schema"),
         (GOOD.replace("0.34", "0.99"), "number"),
-        (GOOD.replace("Steady.", "Increase oxygen."), "forbidden"),
+        (GOOD.replace("Need rising", "Increase oxygen, need rising"), "forbidden"),
         (GOOD.replace("check the probe site", "set FiO2 to 1.00"), "action"),
         (GOOD.replace('"cot":3', '"cot":9'), "cots"),
     ],
@@ -73,7 +73,7 @@ def test_a_healthy_cot_first_is_refused() -> None:
     swapped = json.dumps(
         {
             "notes": [
-                {"cot": 1, "action": "no action needed", "why": "Steady."},
+                {"cot": 1, "action": "nothing flagged", "why": "Time in target 90 percent."},
                 {"cot": 2, "action": "review respiratory support", "why": "Dips."},
                 {"cot": 3, "action": "check the probe site", "why": "Probe."},
             ]
@@ -84,9 +84,29 @@ def test_a_healthy_cot_first_is_refused() -> None:
 
 
 def test_the_handover_uses_its_own_validator() -> None:
-    text = json.dumps({"cots": [{"cot": 1, "summary": "Calm at 90 percent."}]}, separators=(",", ":"))
-    assert model_eval.validate(text, [facts(1)], "handover") == "ok"
-    assert model_eval.validate(text, [facts(1, tir=50)], "handover") == "number"
+    text = json.dumps({"cots": [{"cot": 1, "summary": "Probe trouble at 90 percent."}]}, separators=(",", ":"))
+    assert model_eval.validate(text, [facts(1, 8)], "handover") == "ok"
+    assert model_eval.validate(text, [facts(1, 8, tir=50)], "handover") == "number"
+
+
+def test_a_ward_with_no_flag_is_not_asked_and_not_counted(tmp_path: Path) -> None:
+    quiet = model_eval.Window("q", "watch", [facts(1), facts(2)])
+    answers = tmp_path / "a.jsonl"
+    rows = [
+        {"id": "q", "text": "", "validator": model_eval.NOT_ASKED, "generated": 0, "total_ms": 0.0},
+        {"id": "w", "text": GOOD, "generated": 60, "gen_ms": 6000.0, "total_ms": 8000.0, "deadline_met": 1},
+    ]
+    answers.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    s = model_eval.score_file(answers, {"q": quiet, "w": WINDOW})
+    assert s["answers"] == 1
+    assert s["not_asked"] == 1
+    assert s["valid_rate"] == 1.0
+    assert s["mean_total_s"] == 8.0
+
+
+def test_an_empty_answer_with_a_flag_on_the_ward_is_a_refusal() -> None:
+    s = model_eval.score_answer({"id": "w", "text": ""}, WINDOW, WORDS)
+    assert s["validator"] == "schema"
 
 
 def test_flag_coverage_counts_flags_the_sentence_speaks_to() -> None:
@@ -194,4 +214,7 @@ def test_recorded_answers_still_pass_the_validator_they_passed_on_the_board(path
     for line in path.read_text(encoding="utf-8").splitlines():
         row = json.loads(line)
         window = windows[row["id"]]
-        assert model_eval.validate(row["text"], window.facts, window.kind) == row["validator"], row["id"]
+        if row["validator"] == model_eval.NOT_ASKED:
+            assert not any(f["flags"] for f in window.facts), row["id"]
+        else:
+            assert model_eval.validate(row["text"], window.facts, window.kind) == row["validator"], row["id"]

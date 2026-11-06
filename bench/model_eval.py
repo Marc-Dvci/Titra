@@ -23,6 +23,7 @@ from bench.simrun import run
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / "eval" / "model_cases.json"
+NOT_ASKED = "not asked"
 FIELDS = (
     "cot",
     "seconds",
@@ -161,6 +162,9 @@ def flag_mentioned(flag: str, text: str, words: dict[str, list[str]]) -> bool:
 
 
 def score_answer(row: dict[str, Any], window: Window, words: dict[str, list[str]]) -> dict[str, Any]:
+    if not row.get("text") and not any(f["flags"] for f in window.facts):
+        # With no flag on the ward the model is not asked, in service and here.
+        return {"id": row["id"], "kind": window.kind, "validator": NOT_ASKED, "flags_raised": 0, "flags_covered": 0}
     verdict = validate(row.get("text", ""), window.facts, window.kind)
     out: dict[str, Any] = {
         "id": row["id"],
@@ -191,7 +195,7 @@ def score_file(path: Path, windows: dict[str, Window], cases_path: Path = CASES)
     words = json.loads(cases_path.read_text(encoding="utf-8"))["flag_words"]
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     scored = [score_answer(r, windows[r["id"]], words) for r in rows]
-    n = len(scored)
+    n = sum(s["validator"] != NOT_ASKED for s in scored)
     valid = [s for s in scored if s["validator"] == "ok"]
     verdicts: dict[str, int] = {}
     for s in scored:
@@ -203,6 +207,7 @@ def score_file(path: Path, windows: dict[str, Window], cases_path: Path = CASES)
     out = {
         "file": path.name,
         "answers": n,
+        "not_asked": len(scored) - n,
         "valid": len(valid),
         "valid_rate": round(len(valid) / max(n, 1), 3),
         "verdicts": verdicts,
@@ -213,7 +218,7 @@ def score_file(path: Path, windows: dict[str, Window], cases_path: Path = CASES)
         "first_is_top_priority_rate": round(sum(firsts) / max(len(firsts), 1), 3),
         "generated_tokens": sum(int(r.get("generated", 0)) for r in rows),
     }
-    timed = [r for r in rows if "total_ms" in r]
+    timed = [r for r in rows if "total_ms" in r and r.get("validator") != NOT_ASKED]
     if timed:
         gen_ms = sum(float(r.get("gen_ms", 0.0)) for r in timed)
         gen_tok = sum(int(r.get("generated", 0)) for r in timed)

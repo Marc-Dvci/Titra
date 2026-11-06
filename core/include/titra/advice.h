@@ -30,7 +30,7 @@ const char *ta_system_prefix(void);
 #define TA_ACTION_SUPPORT "review respiratory support"
 #define TA_ACTION_WEAN "consider weaning"
 #define TA_ACTION_SYSTEM "check the system"
-#define TA_ACTION_NONE "no action needed"
+#define TA_ACTION_NONE "nothing flagged"
 
 /* The actions a cot's flags allow, most urgent first. Returns how many were written to out. */
 int ta_allowed_actions(uint32_t flags, const char **out, int cap);
@@ -48,8 +48,15 @@ int ta_cot_phrases(const tf_facts_t *f, char out[][TA_PHRASE_MAX], int cap);
 int ta_watch_prompt(const tf_facts_t *cots, int n, const char *const *notes, char *out, size_t cap);
 int ta_watch_grammar(const tf_facts_t *cots, int n, char *out, size_t cap);
 
+/* The handover: the model writes one sentence for each cot with a flag, in cot order, and nothing for the others. With no
+ * flagged cot the prompt and the grammar return -1: the model has nothing to add. */
 int ta_handover_prompt(const tf_facts_t *cots, int n, char *out, size_t cap);
 int ta_handover_grammar(const tf_facts_t *cots, int n, char *out, size_t cap);
+
+/* One cot's record for the handover, in fixed words from the facts: shown for every cot whatever the model does, so the
+ * model can neither drop a fact nor change one. Returns the length or -1. */
+#define TA_FACTS_MAX 512
+int ta_handover_facts(const tf_facts_t *f, char *out, size_t cap);
 
 /* An incident on one cot: what failed, what Titra did, for how long, whether FiO2 moved. */
 typedef struct {
@@ -83,7 +90,8 @@ typedef enum {
     TA_ERR_FORBIDDEN,  /* words about settings, doses or diagnoses, or text that looks like an instruction */
     TA_ERR_ORDER,      /* a cot ranked above one in a higher tier: harm flags, other flags, no flags */
     TA_ERR_TOO_LONG,   /* a sentence longer than the limit */
-    TA_ERR_CLAIM       /* a number from the facts, attached to the wrong fact */
+    TA_ERR_CLAIM       /* a claim the facts do not support: a number on the wrong fact, a flag the cot does not have,
+                          reassurance about a flagged cot, words where the rules' own sentence belongs */
 } ta_result_t;
 
 const char *ta_result_name(ta_result_t r);

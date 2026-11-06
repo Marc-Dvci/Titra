@@ -93,14 +93,18 @@ static uint64_t g_model_answers, g_model_rejected, g_model_unavailable;
 static ta_watch_t g_handover;
 static char g_handover_state[12] = "none";
 static char g_handover_source[8] = "";
+static char g_handover_validator[16] = "";
+static char g_handover_facts[TA_MAX_COTS][TA_FACTS_MAX];
+static int g_handover_cots;
 static llm_result_t g_handover_result;
 static int g_handover_requested;
 
 static incident_t g_incidents[MAX_INCIDENTS];
 static int g_n_incidents;
-static ta_incident_t g_pending_incident;
-static char g_pending_what[64], g_pending_did[64];
-static int g_pending;
+/* Incidents waiting for the model. Several cots can end one at the same second, and none may be lost. */
+#define INCIDENT_QUEUE 8
+static ta_incident_t g_incident_queue[INCIDENT_QUEUE];
+static int g_incident_head, g_incident_count;
 static int g_pending_flagged;
 
 /* ---- reading the cots ---- */
@@ -113,17 +117,35 @@ static int restarts_since(const cot_t *c, double since) {
     return n;
 }
 
+/* Called with g_mtx held. */
+static void add_incident(const ta_incident_t *inc, const char *source, const char *note) {
+    if (g_n_incidents == MAX_INCIDENTS) {
+        memmove(g_incidents, g_incidents + 1, sizeof(incident_t) * (MAX_INCIDENTS - 1));
+        g_n_incidents--;
+    }
+    incident_t *e = &g_incidents[g_n_incidents++];
+    e->t = titra_now();
+    e->cot = inc->cot;
+    e->duration_s = inc->duration_s;
+    snprintf(e->source, sizeof e->source, "%s", source);
+    snprintf(e->note, sizeof e->note, "%s", note);
+}
+
+static void plain_incident_note(const ta_incident_t *inc, char *note, size_t cap) {
+    snprintf(note, cap, "Cot %d: %s. Titra %s for %d seconds.", inc->cot, inc->what, inc->did, inc->duration_s);
+}
+
+/* Called with g_mtx held. what and did are constants. If the model is far behind, the incident is written in fixed words. */
 static void queue_incident(int cot, const char *what, const char *did, int duration_s, int before, int after) {
-    if (g_pending) return;
-    snprintf(g_pending_what, sizeof g_pending_what, "%s", what);
-    snprintf(g_pending_did, sizeof g_pending_did, "%s", did);
-    g_pending_incident.cot = cot;
-    g_pending_incident.what = g_pending_what;
-    g_pending_incident.did = g_pending_did;
-    g_pending_incident.duration_s = duration_s;
-    g_pending_incident.fio2_before_pm = before;
-    g_pending_incident.fio2_after_pm = after;
-    g_pending = 1;
+    const ta_incident_t inc = {cot, what, did, duration_s, before, after};
+    if (g_incident_count == INCIDENT_QUEUE) {
+        char note[TA_WHY_MAX + 1];
+        plain_incident_note(&inc, note, sizeof note);
+        add_incident(&inc, "flags", note);
+        return;
+    }
+    g_incident_queue[(g_incident_head + g_incident_count) % INCIDENT_QUEUE] = inc;
+    g_incident_count++;
     pthread_cond_signal(&g_wake_incident);
 }
 
@@ -375,25 +397,35 @@ static void run_handover(void) {
     compute_all_facts(facts, HISTORY, titra_now());
     snprintf(g_handover_state, sizeof g_handover_state, "running");
     const int n = g_ncots;
+    /* The record comes first and does not depend on the model. */
+    int flagged = 0;
+    for (int i = 0; i < n; i++) {
+        ta_handover_facts(&facts[i], g_handover_facts[i], sizeof g_handover_facts[i]);
+        flagged += facts[i].flags != 0;
+    }
+    g_handover_cots = n;
     pthread_mutex_unlock(&g_mtx);
 
     llm_result_t r;
     int got = -1;
-    if (ta_handover_prompt(facts, n, prompt, sizeof prompt) > 0 && ta_handover_grammar(facts, n, grammar, sizeof grammar) > 0) {
-        got = llm_ask(prompt, grammar, HANDOVER_DEADLINE_MS, (unsigned)ta_handover_max_tokens(n), 1, LLM_MAX_LOOPS, answer, sizeof answer, &r);
-    }
     ta_watch_t parsed;
-    const ta_result_t v = got > 0 ? ta_validate_handover(answer, facts, n, &parsed) : TA_ERR_SCHEMA;
+    memset(&parsed, 0, sizeof parsed);
+    ta_result_t v = TA_ERR_SCHEMA;
+    if (flagged > 0 && ta_handover_prompt(facts, n, prompt, sizeof prompt) > 0 && ta_handover_grammar(facts, n, grammar, sizeof grammar) > 0) {
+        got = llm_ask(prompt, grammar, HANDOVER_DEADLINE_MS, (unsigned)ta_handover_max_tokens(flagged), 1, LLM_MAX_LOOPS, answer, sizeof answer, &r);
+        if (got > 0) v = ta_validate_handover(answer, facts, n, &parsed);
+    }
     pthread_mutex_lock(&g_mtx);
     if (v == TA_OK) {
         g_handover = parsed;
         g_handover_result = r;
         snprintf(g_handover_source, sizeof g_handover_source, "model");
     } else {
-        ta_fallback_watch(facts, n, &g_handover);
+        memset(&g_handover, 0, sizeof g_handover);
         memset(&g_handover_result, 0, sizeof g_handover_result);
         snprintf(g_handover_source, sizeof g_handover_source, "flags");
     }
+    snprintf(g_handover_validator, sizeof g_handover_validator, "%s", flagged == 0 ? "nothing flagged" : got < 0 ? "unavailable" : ta_result_name(v));
     snprintf(g_handover_state, sizeof g_handover_state, "done");
     pthread_mutex_unlock(&g_mtx);
 }
@@ -439,14 +471,10 @@ static void *incident_worker(void *arg) {
     static char prompt[1024], grammar[4096], answer[OUTPUT_MAX];
     pthread_mutex_lock(&g_mtx);
     for (;;) {
-        while (!g_pending) pthread_cond_wait(&g_wake_incident, &g_mtx);
-        ta_incident_t inc = g_pending_incident;
-        static char what[64], did[64];
-        memcpy(what, g_pending_what, sizeof what);
-        memcpy(did, g_pending_did, sizeof did);
-        inc.what = what;
-        inc.did = did;
-        g_pending = 0;
+        while (g_incident_count == 0) pthread_cond_wait(&g_wake_incident, &g_mtx);
+        const ta_incident_t inc = g_incident_queue[g_incident_head];
+        g_incident_head = (g_incident_head + 1) % INCIDENT_QUEUE;
+        g_incident_count--;
         pthread_mutex_unlock(&g_mtx);
 
         llm_result_t r;
@@ -457,20 +485,9 @@ static void *incident_worker(void *arg) {
         char note[TA_WHY_MAX + 1];
         const ta_result_t v = got > 0 ? ta_validate_incident(answer, &inc, note, sizeof note) : TA_ERR_SCHEMA;
         const int from_model = v == TA_OK;
-        if (!from_model) {
-            snprintf(note, sizeof note, "Cot %d: %s. Titra %s for %d seconds.", inc.cot, what, did, inc.duration_s);
-        }
+        if (!from_model) plain_incident_note(&inc, note, sizeof note);
         pthread_mutex_lock(&g_mtx);
-        if (g_n_incidents == MAX_INCIDENTS) {
-            memmove(g_incidents, g_incidents + 1, sizeof(incident_t) * (MAX_INCIDENTS - 1));
-            g_n_incidents--;
-        }
-        incident_t *e = &g_incidents[g_n_incidents++];
-        e->t = titra_now();
-        e->cot = inc.cot;
-        e->duration_s = inc.duration_s;
-        snprintf(e->source, sizeof e->source, "%s", from_model ? "model" : "flags");
-        snprintf(e->note, sizeof e->note, "%s", note);
+        add_incident(&inc, from_model ? "model" : "flags", note);
     }
     return NULL;
 }
@@ -518,9 +535,9 @@ static int on_text(char *buf, int cap) {
     int len = 0;
     pthread_mutex_lock(&g_mtx);
     const double now = titra_now();
-    add(buf, cap, &len, "{\"model\":\"%s\",\"answers\":%llu,\"rejected\":%llu,\"unavailable\":%llu,\"watch\":{\"source\":\"%s\",\"validator\":\"%s\",\"age_s\":%.0f,",
+    add(buf, cap, &len, "{\"model\":\"%s\",\"answers\":%llu,\"rejected\":%llu,\"unavailable\":%llu,\"watch\":{\"source\":\"%s\",\"validator\":\"%s\",\"age_s\":%.0f,\"window_min\":%d,",
         g_model_ok ? "ready" : "unavailable", (unsigned long long)g_model_answers, (unsigned long long)g_model_rejected, (unsigned long long)g_model_unavailable,
-        g_watch_source, g_watch_validator, g_watch_t > 0.0 ? now - g_watch_t : -1.0);
+        g_watch_source, g_watch_validator, g_watch_t > 0.0 ? now - g_watch_t : -1.0, g_window_s / 60);
     add_result(buf, cap, &len, &g_watch_result);
     add(buf, cap, &len, ",\"notes\":");
     add_notes(buf, cap, &len, &g_watch);
@@ -528,6 +545,10 @@ static int on_text(char *buf, int cap) {
     for (int i = 0; i < g_ncots; i++) {
         add(buf, cap, &len, "%s{\"cot\":%d,\"risk\":%d,\"note\":\"", i ? "," : "", i + 1, g_facts[i].risk_pct);
         json_text(buf, cap, &len, g_cots[i].note);
+        char record[TA_FACTS_MAX];
+        if (ta_handover_facts(&g_facts[i], record, sizeof record) < 0) record[0] = '\0';
+        add(buf, cap, &len, "\",\"record\":\"");
+        json_text(buf, cap, &len, record);
         add(buf, cap, &len, "\",\"flags\":[");
         int first = 1;
         for (uint32_t bit = 1; bit < (1u << TF_FLAG_COUNT); bit <<= 1) {
@@ -538,9 +559,15 @@ static int on_text(char *buf, int cap) {
         }
         add(buf, cap, &len, "]}");
     }
-    add(buf, cap, &len, "],\"handover\":{\"state\":\"%s\",\"source\":\"%s\",", g_handover_state, g_handover_source);
+    add(buf, cap, &len, "],\"handover\":{\"state\":\"%s\",\"source\":\"%s\",\"validator\":\"%s\",", g_handover_state, g_handover_source, g_handover_validator);
     add_result(buf, cap, &len, &g_handover_result);
-    add(buf, cap, &len, ",\"notes\":");
+    add(buf, cap, &len, ",\"facts\":[");
+    for (int i = 0; i < g_handover_cots; i++) {
+        add(buf, cap, &len, "%s{\"cot\":%d,\"text\":\"", i ? "," : "", i + 1);
+        json_text(buf, cap, &len, g_handover_facts[i]);
+        add(buf, cap, &len, "\"}");
+    }
+    add(buf, cap, &len, "],\"notes\":");
     add_notes(buf, cap, &len, &g_handover);
     add(buf, cap, &len, "},\"incidents\":[");
     for (int i = g_n_incidents - 1; i >= 0; i--) {
@@ -805,12 +832,28 @@ static int replay(const char *path, int lo, int hi, unsigned deadline_ms) {
             c[i].flags = flags;
         }
         const int handover = strcmp(kind, "handover") == 0;
+        /* As in service: with no flag on the ward the model is not asked. */
+        int flagged = 0;
+        for (int i = 0; i < n; i++) flagged += c[i].flags != 0;
+        if (flagged == 0) {
+            printf("{\"id\":\"%s\",\"kind\":\"%s\",\"validator\":\"not asked\",\"prompt_tokens\":0,\"generated\":0,\"loops\":[0,0,0,0],\"queue_ms\":0,\"prompt_ms\":0,\"gen_ms\":0,"
+                   "\"total_ms\":0,\"deadline_met\":1,\"text\":\"\"}\n",
+                   id, kind);
+            fflush(stdout);
+            continue;
+        }
         const int pl = handover ? ta_handover_prompt(c, n, prompt, sizeof prompt) : ta_watch_prompt(c, n, NULL, prompt, sizeof prompt);
         const int gl = handover ? ta_handover_grammar(c, n, grammar, sizeof grammar) : ta_watch_grammar(c, n, grammar, sizeof grammar);
         if (pl <= 0 || gl <= 0) continue;
         llm_result_t r;
-        const unsigned max_tokens = (unsigned)(handover ? ta_handover_max_tokens(n) : ta_watch_max_tokens(n));
+        const unsigned max_tokens = (unsigned)(handover ? ta_handover_max_tokens(flagged) : ta_watch_max_tokens(n));
         const int got = llm_ask(prompt, grammar, deadline_ms, max_tokens, lo, hi, answer, sizeof answer, &r);
+        if (got < 0) {
+            /* A model that is not there has not been refused: stop, so a run cannot record this as an answer. */
+            fprintf(stderr, "advisor: the model did not answer case %s\n", id);
+            fclose(f);
+            return 2;
+        }
         ta_watch_t w;
         const ta_result_t v = got <= 0 ? TA_ERR_SCHEMA : handover ? ta_validate_handover(answer, c, n, &w) : ta_validate_watch(answer, c, n, &w);
         int len = 0;

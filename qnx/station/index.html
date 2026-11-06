@@ -51,6 +51,8 @@
            padding: 3px 10px; cursor: pointer; }
   .model { font-size: 13px; color: var(--muted); padding: 10px 32px 16px; }
   .nurse { color: var(--ink); }
+  #handover-text .record, .advice .record { color: var(--muted); font-size: 13px; display: block; }
+  #handover-text .origin { color: var(--muted); font-size: 13px; }
   form.note { display: flex; gap: 10px; align-items: center; margin: 4px 0 8px; font-size: 14px; }
   form.note input[type=text] { flex: 1; max-width: 560px; font: inherit; padding: 3px 8px; border: 1px solid var(--rule); border-radius: 4px; }
   form.note select { font: inherit; padding: 2px 4px; border: 1px solid var(--rule); border-radius: 4px; background: var(--ground); }
@@ -81,6 +83,7 @@ const ALARMS = {1: "SpO2 signal lost, FiO2 held", 2: "Fallback FiO2 applied", 4:
 const MODES = {control: "Control", hold: "Hold", fallback: "Fallback"};
 let history = {};
 let advice = {};
+let handoverAsked = 0;
 const ORDER = ["First", "Second", "Third", "Fourth"];
 
 function esc(t) { return String(t).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c])); }
@@ -89,16 +92,18 @@ function adviceRow(cot) {
   const notes = advice.watch && advice.watch.notes ? advice.watch.notes : [];
   const i = notes.findIndex(n => n.cot === cot);
   if (i < 0) return "";  // no advice before the first watch
-  const n = notes[i], flagged = n.action !== "no action needed";
-  return `<div class="advice ${flagged ? "flagged" : ""}"><div class="order">${ORDER[i] || ""}</div>
+  const n = notes[i], flagged = n.action !== "nothing flagged", anyFlag = notes.some(x => x.action !== "nothing flagged");
+  return `<div class="advice ${flagged ? "flagged" : ""}"><div class="order">${anyFlag ? ORDER[i] || "" : ""}</div>
     <div><span class="action">${esc(n.action[0].toUpperCase() + n.action.slice(1))}.</span> <span class="why">${esc(n.why)}${riskText(cot)}</span></div></div>`;
 }
 
 function riskText(cot) {
   const f = (advice.flags || []).find(x => x.cot === cot);
+  // The model writes words. Every number and every flag on the row comes from C, whatever the sentence says or leaves out.
   const risk = f && f.risk >= 0 ? ` Chance of a dip in 10 minutes: ${f.risk}%.` : "";
   const note = f && f.note ? ` <span class="nurse">Nurse's note: ${esc(f.note)}</span>` : "";
-  return risk + note;
+  const record = f && f.record && f.flags && f.flags.length ? `<span class="record">${esc(f.record)}</span>` : "";
+  return risk + note + record;
 }
 
 function modelLine() {
@@ -109,17 +114,31 @@ function modelLine() {
     : w.validator === "nothing flagged" ? "Nothing flagged: the rules' own sentences"
     : "Deterministic flags" + (advice.model === "unavailable" ? ": the model is unavailable" : "");
   const age = w.age_s >= 0 ? ` · ${Math.round(w.age_s / 60)} min ago` : "";
-  return `${source}${age}. Advice only: this software has no path to any blender.`;
+  const span = w.window_min ? ` Notes read up to the last ${w.window_min} minutes.` : "";
+  return `${source}${age}.${span} Advice only: this software has no path to any blender.`;
+}
+
+function handoverText(h) {
+  const said = {};
+  for (const n of h.notes || []) said[n.cot] = n.why;
+  const rows = h.facts.map(f =>
+    `<p><b>Cot ${f.cot}.</b> ${said[f.cot] ? esc(said[f.cot]) : ""}<span class="record">${esc(f.text)}</span></p>`).join("");
+  const origin = h.source === "model"
+    ? `The record is the controller's. The sentences were written by the on-board model and checked against it: ${h.loops} loop${h.loops === 1 ? "" : "s"}, ${(h.total_ms / 1000).toFixed(0)} s.`
+    : h.validator === "nothing flagged" ? "The record is the controller's. Nothing flagged, so the model was not asked."
+    : "The record is the controller's. The model's sentences are not shown: " + (h.validator === "unavailable" ? "the model is unavailable." : "they did not pass the check.");
+  return rows + `<p class="origin">${esc(origin)}</p>`;
 }
 
 function renderAdvice() {
   document.getElementById("model").textContent = modelLine();
   const h = advice.handover;
   const state = h ? h.state : "none";
-  document.getElementById("handover").disabled = state === "running";
-  document.getElementById("handover").textContent = state === "running" ? "Writing" : "Write it now";
-  document.getElementById("handover-text").innerHTML = h && h.notes && h.notes.length && state === "done"
-    ? h.notes.map(n => `<p><b>Cot ${n.cot}.</b> ${esc(n.why)}</p>`).join("") : "";
+  // The answer to a click arrives through two polls, so the click itself shows at once.
+  const writing = state === "running" || Date.now() - handoverAsked < 6000;
+  document.getElementById("handover").disabled = writing;
+  document.getElementById("handover").textContent = writing ? "Writing" : "Write it now";
+  document.getElementById("handover-text").innerHTML = h && h.facts && h.facts.length && state === "done" && !writing ? handoverText(h) : "";
   const inc = advice.incidents || [];
   document.getElementById("incidents").innerHTML = inc.length
     ? inc.slice(0, 4).map(e => `<p><b>Cot ${e.cot}, ${Math.round(e.age_s / 60)} min ago.</b> ${esc(e.note)}</p>`).join("")
@@ -222,6 +241,8 @@ async function refreshAdvice() {
 }
 
 document.getElementById("handover").addEventListener("click", () => {
+  handoverAsked = Date.now();
+  renderAdvice();
   fetch("/api/handover", {method: "POST"}).then(refreshAdvice);
 });
 

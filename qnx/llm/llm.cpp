@@ -38,6 +38,7 @@
 #include <atomic>
 #include <new>
 #include <string>
+#include <exception>
 #include <vector>
 
 struct llm_ocb;
@@ -298,9 +299,12 @@ struct compute_args_t {
     int threads, first_cpu, n_ctx, poll;
 };
 
+void signal_stack_for_this_thread();
+
 void *compute_thread(void *arg) {
     const compute_args_t *a = static_cast<compute_args_t *>(arg);
     set_priority(g_compute_priority);
+    signal_stack_for_this_thread();
 
     llama_log_set(log_quiet, nullptr);
     llama_backend_init();
@@ -704,23 +708,96 @@ void *watchdog(void *arg) {
     set_priority(WATCHDOG_PRIORITY);
     uint64_t seen = 0;
     double last_change = now_ms();
-    struct timespec one = {1, 0};
+    int reported = 0;
+    /* Twice per HAM's period, on an absolute clock. A relative sleep drifts past the period, and each drift is a missed beat. */
+    struct timespec next;
+    clock_gettime(CLOCK_MONOTONIC, &next);
+    double woke = now_ms();
     for (;;) {
-        nanosleep(&one, nullptr);
+        next.tv_nsec += 500000000L;
+        if (next.tv_nsec >= 1000000000L) {
+            next.tv_nsec -= 1000000000L;
+            next.tv_sec += 1;
+        }
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, nullptr);
+        const double t = now_ms();
+        if (t - woke > 3000.0) fprintf(stderr, "llm: the watchdog woke %.1f s after its last wake\n", (t - woke) / 1000.0);
+        woke = t;
         const uint64_t p = g_progress.load();
-        /* Before the first answer the only work is the start-up decode, which has its own progress count. */
-        pthread_mutex_lock(&g_mtx);
-        int busy = 0;
-        for (auto &s : g_sessions) busy |= s.in_use && (s.state == LLM_RUNNING || s.state == LLM_WAITING);
-        pthread_mutex_unlock(&g_mtx);
+        /* Before the first answer the only work is the start-up decode, which has its own progress count. The heartbeat never
+         * waits for the shared state: if another thread holds it, this beat counts the model as busy. */
+        int busy = 1;
+        if (pthread_mutex_trylock(&g_mtx) == 0) {
+            busy = 0;
+            for (auto &s : g_sessions) busy |= s.in_use && (s.state == LLM_RUNNING || s.state == LLM_WAITING);
+            pthread_mutex_unlock(&g_mtx);
+        }
         if (p != seen || !busy) {
             seen = p;
             last_change = now_ms();
         }
         const double stalled = (now_ms() - last_change) / 1000.0;
+        /* Says once where the work stopped: inside a decode, or in the single-threaded sampling between decodes. */
+        if (stalled < 20.0) {
+            reported = 0;
+        } else if (!reported) {
+            reported = 1;
+            if (pthread_mutex_trylock(&g_mtx) == 0) {
+                for (auto &s : g_sessions) {
+                    if (!s.in_use) continue;
+                    const size_t len = s.output.size();
+                    const size_t from = len > 120 ? len - 120 : 0;
+                    fprintf(stderr, "llm: no progress for %.0f s, %s, state %d, prompt %zu of %zu, generated %d, ends: %s\n", stalled,
+                            g_decoding.load() ? "inside a decode" : "between decodes", s.state, s.prompt_pos, s.prompt.size(), s.generated, s.output.c_str() + from);
+                }
+                pthread_mutex_unlock(&g_mtx);
+            } else {
+                fprintf(stderr, "llm: no progress for %.0f s, shared state held\n", stalled);
+            }
+        }
         if (w->use_ham && stalled < w->stall_s) ham_heartbeat();
     }
     return nullptr;
+}
+
+/* A death says why, on the console: HAM restarts the process either way, and a silent restart hides the fault. */
+void on_fatal_signal(int sig) {
+    char text[64];
+    const int n = snprintf(text, sizeof text, "llm: died on signal %d\n", sig);
+    if (n > 0 && write(STDERR_FILENO, text, (size_t)n) < 0) _exit(128 + sig);
+    _exit(128 + sig);
+}
+
+void on_terminate() {
+    const char *what = "unknown";
+    try {
+        if (std::current_exception()) std::rethrow_exception(std::current_exception());
+    } catch (const std::exception &e) {
+        what = e.what();
+    } catch (...) {
+    }
+    fprintf(stderr, "llm: terminated: %s\n", what);
+    _exit(127);
+}
+
+/* Each thread that can overflow its stack gives the handler another one, or a stack overflow would die silently. */
+void signal_stack_for_this_thread() {
+    static thread_local char area[65536];
+    stack_t st;
+    memset(&st, 0, sizeof st);
+    st.ss_sp = area;
+    st.ss_size = sizeof area;
+    sigaltstack(&st, nullptr);
+}
+
+void report_deaths() {
+    std::set_terminate(on_terminate);
+    signal_stack_for_this_thread();
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = on_fatal_signal;
+    sa.sa_flags = SA_ONSTACK;
+    for (int sig : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT}) sigaction(sig, &sa, nullptr);
 }
 
 void attach_ham(int argc, char **argv, const char *type) {
@@ -920,6 +997,7 @@ int escape_attempts(int attempts, const char *weights) {
 
 int main(int argc, char **argv) {
     const char *model = "/dev/shmem/dory.gguf", *type = nullptr;
+    report_deaths();
     int threads = 3, first_cpu = 1, n_ctx = 4096, use_ham = 0, opt, limit_mb = 6144, stall_s = 60, poll = 50, escape = 0, uid = 300;
     while ((opt = getopt(argc, argv, "m:t:f:p:c:HT:L:w:P:Eu:")) != -1) {
         switch (opt) {
