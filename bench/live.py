@@ -255,7 +255,8 @@ async def run_case(case: dict[str, Any], cots: dict[int, CotTwin], rec: Recorder
     async def poll_status() -> None:
         # A stopped controller cannot answer its status path, so each read gets a short timeout.
         while rec.now() - t0 < observe:
-            polls.append((rec.now(), await guest.status(cot, timeout=3.0)))
+            status = await guest.status(cot, timeout=3.0)
+            polls.append((rec.now(), status))  # stamped when the answer is in hand, so it can only read late
             await asyncio.sleep(0.5)
 
     poller = asyncio.ensure_future(poll_status()) if fault in ("kill_titractl", "stop_titractl") else None

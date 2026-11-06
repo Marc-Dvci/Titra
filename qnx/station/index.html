@@ -114,8 +114,9 @@ function modelLine() {
     : w.validator === "nothing flagged" ? "Nothing flagged: the rules' own sentences"
     : "Deterministic flags" + (advice.model === "unavailable" ? ": the model is unavailable" : "");
   const age = w.age_s >= 0 ? ` · ${Math.round(w.age_s / 60)} min ago` : "";
+  const down = w.source === "model" && advice.model === "unavailable" ? " The model is unavailable now." : "";
   const span = w.window_min ? ` Notes read up to the last ${w.window_min} minutes.` : "";
-  return `${source}${age}.${span} Advice only: this software has no path to any blender.`;
+  return `${source}${age}.${down}${span} Advice only: this software has no path to any blender.`;
 }
 
 function handoverText(h) {

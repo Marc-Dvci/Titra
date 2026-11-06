@@ -21,6 +21,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -87,6 +88,7 @@ static llm_result_t g_watch_result;
 static double g_watch_t;
 static int g_model_ok;
 static double g_model_seen = -100.0;
+static int g_model_said_not_ready;
 static uint64_t g_model_answers, g_model_rejected, g_model_unavailable;
 
 static ta_watch_t g_handover;
@@ -202,18 +204,20 @@ static int model_is_ready(void) {
     return strstr(line, "\"state\":\"ready\"") != NULL;
 }
 
-/* A hung model would block whoever asks it, so only this thread asks: the cots' history never waits for the model. */
+/* A hung model would block whoever asks it, so only this thread asks: the cots' history never waits for the model.
+ * A model that is gone or still loading says so at once; a hung one says nothing, and goes stale after MODEL_FRESH_S. */
 static void *model_watcher(void *arg) {
     (void)arg;
-    struct timespec one = {1, 0};
+    struct timespec half = {0, 500000000};
     for (;;) {
-        if (model_is_ready()) {
-            const double now = titra_now();
-            pthread_mutex_lock(&g_mtx);
-            g_model_seen = now;
-            pthread_mutex_unlock(&g_mtx);
-        }
-        nanosleep(&one, NULL);
+        const int ready = model_is_ready();
+        const double now = titra_now();
+        pthread_mutex_lock(&g_mtx);
+        if (ready) g_model_seen = now;
+        g_model_said_not_ready = !ready;
+        if (!ready) g_model_ok = 0;
+        pthread_mutex_unlock(&g_mtx);
+        nanosleep(&half, NULL);
     }
     return NULL;
 }
@@ -248,7 +252,7 @@ static void *poller(void *arg) {
             record(&g_cots[i], i + 1, &s, ok, now);
         }
         compute_all_facts(g_facts, g_window_s, now);
-        g_model_ok = now - g_model_seen < MODEL_FRESH_S;
+        g_model_ok = !g_model_said_not_ready && now - g_model_seen < MODEL_FRESH_S;
         int changed = 0;
         for (int i = 0; i < g_ncots; i++) {
             if (g_facts[i].flags != last_flags[i]) changed = 1;
@@ -264,6 +268,9 @@ static void *poller(void *arg) {
 }
 
 /* ---- asking the model ---- */
+
+/* A thread that wants to watch its answer grow points this at a counter (the measuring mode -U does). */
+static _Thread_local atomic_size_t *tl_answer_so_far;
 
 /* Sends one request and reads the answer to the end. Returns the answer's length, or -1 if the model is unavailable. */
 static int llm_ask(const char *prompt, const char *grammar, unsigned deadline_ms, unsigned max_tokens, int min_loops, int max_loops, char *out, size_t cap,
@@ -305,6 +312,7 @@ static int llm_ask(const char *prompt, const char *grammar, unsigned deadline_ms
         }
         if (n == 0) break;
         have += (size_t)n;
+        if (tl_answer_so_far != NULL) atomic_store(tl_answer_so_far, have);
         if (have >= cap - 1) break;
     }
     out[have] = '\0';
@@ -679,6 +687,7 @@ static int self_attack(void) {
 typedef struct {
     llm_result_t result;
     int got;
+    atomic_size_t so_far;
 } long_job_t;
 
 static void *long_request(void *arg) {
@@ -687,19 +696,20 @@ static void *long_request(void *arg) {
     tf_facts_t c[3];
     sample_facts(c);
     ta_handover_prompt(c, 3, prompt, sizeof prompt);
+    tl_answer_so_far = &j->so_far;
     j->got = llm_ask(prompt, NULL, HANDOVER_DEADLINE_MS, 240, 1, LLM_MAX_LOOPS, answer, sizeof answer, &j->result);
     return NULL;
 }
 
-/* A short request with a 15 s deadline arrives while a long one is generating. */
+/* A short request with a 15 s deadline arrives while a long one is generating: the long answer's first words are the signal. */
 static int urgent_during_long(void) {
     static char prompt[PROMPT_MAX], grammar[GRAMMAR_MAX], answer[OUTPUT_MAX];
     long_job_t job;
     memset(&job, 0, sizeof job);
     pthread_t tid;
     pthread_create(&tid, NULL, long_request, &job);
-    struct timespec wait = {12, 0};
-    nanosleep(&wait, NULL);
+    const struct timespec tenth = {0, 100000000};
+    for (int i = 0; i < 1200 && atomic_load(&job.so_far) == 0; i++) nanosleep(&tenth, NULL);
     tf_facts_t one;
     memset(&one, 0, sizeof one);
     one.cot = 2;
