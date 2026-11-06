@@ -35,8 +35,13 @@ const char *ta_system_prefix(void);
 /* The actions a cot's flags allow, most urgent first. Returns how many were written to out. */
 int ta_allowed_actions(uint32_t flags, const char **out, int cap);
 
-/* The numbers the model may write about this cot, as strings ("71", "0.25", ...). Returns how many. */
+/* The numbers the validator accepts for this cot, as strings ("71", "0.25", ...). Returns how many. */
 int ta_cot_numbers(const tf_facts_t *f, char out[][12], int cap);
+
+/* The phrases that carry this cot's numbers ("19 desaturation episodes", "FiO2 from 0.28 to 0.34", ...). The prompt lists
+ * them and the grammar allows digits only inside them. Returns how many. */
+#define TA_PHRASE_MAX 72
+int ta_cot_phrases(const tf_facts_t *f, char out[][TA_PHRASE_MAX], int cap);
 
 /* Everything below returns the length written, or -1 if it does not fit. notes[i] is an optional nurse's note for
  * cots[i], treated as data; NULL or empty means none. notes may be NULL. */
@@ -59,6 +64,10 @@ typedef struct {
 int ta_incident_prompt(const ta_incident_t *inc, char *out, size_t cap);
 int ta_incident_grammar(const ta_incident_t *inc, char *out, size_t cap);
 
+/* A cot's tier in the nurse's order: 0 a flag that can harm, 1 any other flag, 2 no flag. The model orders cots within a
+ * tier; it cannot put a cot above a higher tier. */
+int ta_tier(uint32_t flags);
+
 /* The most tokens a valid answer can take, for the deadline logic. */
 int ta_watch_max_tokens(int n);
 int ta_handover_max_tokens(int n);
@@ -72,8 +81,9 @@ typedef enum {
     TA_ERR_ACTION,     /* an action not allowed by that cot's flags */
     TA_ERR_NUMBER,     /* a number that is not in that cot's facts */
     TA_ERR_FORBIDDEN,  /* words about settings, doses or diagnoses, or text that looks like an instruction */
-    TA_ERR_ORDER,      /* a cot with no flag ranked above a cot with a flag */
-    TA_ERR_TOO_LONG    /* a sentence longer than the limit */
+    TA_ERR_ORDER,      /* a cot ranked above one in a higher tier: harm flags, other flags, no flags */
+    TA_ERR_TOO_LONG,   /* a sentence longer than the limit */
+    TA_ERR_CLAIM       /* a number from the facts, attached to the wrong fact */
 } ta_result_t;
 
 const char *ta_result_name(ta_result_t r);
