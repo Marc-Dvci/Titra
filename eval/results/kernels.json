@@ -1,0 +1,31 @@
+{
+ "description": "AVX2 Q5_K 8x8 kernels against ggml's path without repacking: the same binary (qnx/llm/llm_bench.cpp, -X turns repacking off), 3 threads, the same 158-token prompt, 48 generated tokens, greedy sampling, on the Linux host. One run each.",
+ "equivalence": {
+  "products_compared": 48672,
+  "differ": 0
+ },
+ "before": {
+  "1": {
+   "prompt_tok_s": 59.7,
+   "gen_tok_s": 15.99,
+   "worst_token_ms": 74
+  },
+  "4": {
+   "prompt_tok_s": 22.7,
+   "gen_tok_s": 6.72,
+   "worst_token_ms": 168
+  }
+ },
+ "after": {
+  "1": {
+   "prompt_tok_s": 54.6,
+   "gen_tok_s": 16.47,
+   "worst_token_ms": 63
+  },
+  "4": {
+   "prompt_tok_s": 20.6,
+   "gen_tok_s": 7.16,
+   "worst_token_ms": 145
+  }
+ }
+}

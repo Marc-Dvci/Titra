@@ -54,6 +54,8 @@ def budget(expect: dict[str, object]) -> str:
         parts.append("deadline met")
     if "receive_priority" in expect:
         parts.append(f"receiver stays at {expect['receive_priority']}")
+    if expect.get("advice_unavailable_seen"):
+        parts.append("page says unavailable")
     return ", ".join(parts)
 
 
@@ -83,11 +85,11 @@ def measured(r: dict[str, object]) -> str:
     if "model_generated_tokens" in m:
         parts.append(f"{m['model_generated_tokens']} tokens")
     if "urgent_deadline_met" in m:
-        parts.append(
-            f"deadline {'met' if m['urgent_deadline_met'] else 'missed'}, long request preempted {m.get('long_preempted', 0)} times"
-        )
+        parts.append(f"deadline {'met' if m['urgent_deadline_met'] else 'missed'}, long request overtaken")
     if "receive_priority" in m:
         parts.append(f"receiver at {m['receive_priority']}")
+    if m.get("advice_unavailable_seen"):
+        parts.append("page said unavailable")
     return ", ".join(parts)
 
 
