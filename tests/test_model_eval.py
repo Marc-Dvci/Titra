@@ -41,8 +41,12 @@ WINDOW = model_eval.Window("w", "watch", WARD)
 GOOD = json.dumps(
     {
         "notes": [
-            {"cot": 2, "action": "review respiratory support", "why": "Need rising from 0.25 to 0.34, with 6 dips."},
-            {"cot": 3, "action": "check the probe site", "why": "The probe signal was lost 7 times."},
+            {
+                "cot": 2,
+                "action": "review respiratory support",
+                "why": "Rising need and frequent dips mean the nurse should review respiratory support.",
+            },
+            {"cot": 3, "action": "check the probe site", "why": "The probe signal was lost often."},
             {"cot": 1, "action": "nothing flagged", "why": "Time in target 90 percent."},
         ]
     },
@@ -59,8 +63,9 @@ def test_a_good_answer_passes_the_c_validator() -> None:
     "bad, verdict",
     [
         ("not json", "schema"),
-        (GOOD.replace("0.34", "0.99"), "number"),
-        (GOOD.replace("Need rising", "Increase oxygen, need rising"), "forbidden"),
+        (GOOD.replace("Rising need", "Rising 0.99 need"), "number"),
+        (GOOD.replace("Rising need", "Increase oxygen and rising need"), "forbidden"),
+        (GOOD.replace("Rising need", "Stable need"), "word"),
         (GOOD.replace("check the probe site", "set FiO2 to 1.00"), "action"),
         (GOOD.replace('"cot":3', '"cot":9'), "cots"),
     ],
@@ -84,9 +89,9 @@ def test_a_healthy_cot_first_is_refused() -> None:
 
 
 def test_the_handover_uses_its_own_validator() -> None:
-    text = json.dumps({"cots": [{"cot": 1, "summary": "Probe trouble at 90 percent."}]}, separators=(",", ":"))
+    text = json.dumps({"cots": [{"cot": 1, "summary": "Probe trouble."}]}, separators=(",", ":"))
     assert model_eval.validate(text, [facts(1, 8)], "handover") == "ok"
-    assert model_eval.validate(text, [facts(1, 8, tir=50)], "handover") == "number"
+    assert model_eval.validate(text.replace("Probe trouble", "Probe trouble 90"), [facts(1, 8)], "handover") == "number"
 
 
 def test_a_ward_with_no_flag_is_not_asked_and_not_counted(tmp_path: Path) -> None:
@@ -117,7 +122,10 @@ def test_flag_coverage_counts_flags_the_sentence_speaks_to() -> None:
 
 
 def test_a_sentence_silent_on_a_flag_loses_coverage() -> None:
-    silent = GOOD.replace("Need rising from 0.25 to 0.34, with 6 dips.", "Look at this baby.")
+    silent = GOOD.replace(
+        "Rising need and frequent dips mean the nurse should review respiratory support.",
+        "The nurse should review support.",
+    )
     s = model_eval.score_answer({"id": "w", "text": silent}, WINDOW, WORDS)
     assert s["flags_raised"] == 3
     assert s["flags_covered"] == 1

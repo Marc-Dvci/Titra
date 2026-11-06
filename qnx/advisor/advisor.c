@@ -15,6 +15,7 @@
  * Deterministic first, model last. The C core computes the facts and flags and always has an answer. The model ranks
  * and phrases; its answer is shown only if the validator passes it, and otherwise the deterministic answer stands.
  */
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -42,7 +43,7 @@
 #define MAX_INCIDENTS 8
 #define WATCH_DEADLINE_MS 120000u
 #define HANDOVER_DEADLINE_MS 600000u
-#define INCIDENT_DEADLINE_MS 15000u
+#define URGENT_DEADLINE_MS 15000u
 #define OUTPUT_MAX 4096
 #define FIRST_WATCH_S 300.0
 #define MODEL_FRESH_S 3.0
@@ -69,7 +70,6 @@ typedef struct {
     double t;
     int cot;
     int duration_s;
-    char source[8];
     char note[TA_WHY_MAX + 1];
 } incident_t;
 
@@ -78,7 +78,6 @@ static int g_ncots = 3;
 static int g_window_s = WATCH_WINDOW_DEFAULT;
 static pthread_mutex_t g_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_wake;
-static pthread_cond_t g_wake_incident = PTHREAD_COND_INITIALIZER;
 
 static tf_facts_t g_facts[TA_MAX_COTS];
 static ta_watch_t g_watch;
@@ -101,10 +100,6 @@ static int g_handover_requested;
 
 static incident_t g_incidents[MAX_INCIDENTS];
 static int g_n_incidents;
-/* Incidents waiting for the model. Several cots can end one at the same second, and none may be lost. */
-#define INCIDENT_QUEUE 8
-static ta_incident_t g_incident_queue[INCIDENT_QUEUE];
-static int g_incident_head, g_incident_count;
 static int g_pending_flagged;
 
 /* ---- reading the cots ---- */
@@ -117,36 +112,25 @@ static int restarts_since(const cot_t *c, double since) {
     return n;
 }
 
-/* Called with g_mtx held. */
-static void add_incident(const ta_incident_t *inc, const char *source, const char *note) {
+/* Called with g_mtx held. What failed, what Titra did, for how long and whether FiO2 moved: every word from the controller's
+ * state, so the note is exact and ready the second the incident ends. */
+static void note_incident(int cot, const char *what, const char *did, int duration_s, int before, int after) {
     if (g_n_incidents == MAX_INCIDENTS) {
         memmove(g_incidents, g_incidents + 1, sizeof(incident_t) * (MAX_INCIDENTS - 1));
         g_n_incidents--;
     }
     incident_t *e = &g_incidents[g_n_incidents++];
     e->t = titra_now();
-    e->cot = inc->cot;
-    e->duration_s = inc->duration_s;
-    snprintf(e->source, sizeof e->source, "%s", source);
-    snprintf(e->note, sizeof e->note, "%s", note);
-}
-
-static void plain_incident_note(const ta_incident_t *inc, char *note, size_t cap) {
-    snprintf(note, cap, "Cot %d: %s. Titra %s for %d seconds.", inc->cot, inc->what, inc->did, inc->duration_s);
-}
-
-/* Called with g_mtx held. what and did are constants. If the model is far behind, the incident is written in fixed words. */
-static void queue_incident(int cot, const char *what, const char *did, int duration_s, int before, int after) {
-    const ta_incident_t inc = {cot, what, did, duration_s, before, after};
-    if (g_incident_count == INCIDENT_QUEUE) {
-        char note[TA_WHY_MAX + 1];
-        plain_incident_note(&inc, note, sizeof note);
-        add_incident(&inc, "flags", note);
-        return;
+    e->cot = cot;
+    e->duration_s = duration_s;
+    char lasted[32] = "", fio2[48] = "";
+    if (duration_s > 0) snprintf(lasted, sizeof lasted, " for %d seconds", duration_s);
+    if (before >= 0 && before == after) {
+        snprintf(fio2, sizeof fio2, " FiO2 stayed at %d.%02d.", before / 1000, (before % 1000) / 10);
+    } else if (before >= 0 && after >= 0) {
+        snprintf(fio2, sizeof fio2, " FiO2 moved from %d.%02d to %d.%02d.", before / 1000, (before % 1000) / 10, after / 1000, (after % 1000) / 10);
     }
-    g_incident_queue[(g_incident_head + g_incident_count) % INCIDENT_QUEUE] = inc;
-    g_incident_count++;
-    pthread_cond_signal(&g_wake_incident);
+    snprintf(e->note, sizeof e->note, "%c%s. Titra %s%s.%s", toupper((unsigned char)what[0]), what + 1, did, lasted, fio2);
 }
 
 static const char *const INCIDENT_WHAT[] = {"", "the oximeter signal was lost", "the link to the blender was lost", "the controller restarted"};
@@ -175,7 +159,7 @@ static void record(cot_t *c, int cot, const titra_cot_status_t *s, int ok, doubl
             c->n_restarts--;
         }
         c->restarts[c->n_restarts++] = now;
-        queue_incident(cot, INCIDENT_WHAT[3], INCIDENT_DID[3], 0, x.fio2_pm, x.fio2_pm);
+        note_incident(cot, INCIDENT_WHAT[3], INCIDENT_DID[3], 0, x.fio2_pm, x.fio2_pm);
     }
     c->started_s = s->started_s;
 
@@ -189,7 +173,7 @@ static void record(cot_t *c, int cot, const titra_cot_status_t *s, int ok, doubl
         c->episode_fio2_pm = x.fio2_pm;
     } else if (!kind && c->episode_kind) {
         const int len = (int)(now - c->episode_start + 0.5);
-        if (len >= 5) queue_incident(cot, INCIDENT_WHAT[c->episode_kind], INCIDENT_DID[c->episode_kind], len, c->episode_fio2_pm, x.fio2_pm);
+        if (len >= 5) note_incident(cot, INCIDENT_WHAT[c->episode_kind], INCIDENT_DID[c->episode_kind], len, c->episode_fio2_pm, x.fio2_pm);
         c->episode_kind = 0;
     }
     c->last = *s;
@@ -466,32 +450,6 @@ static void *slow_worker(void *arg) {
     return NULL;
 }
 
-static void *incident_worker(void *arg) {
-    (void)arg;
-    static char prompt[1024], grammar[4096], answer[OUTPUT_MAX];
-    pthread_mutex_lock(&g_mtx);
-    for (;;) {
-        while (g_incident_count == 0) pthread_cond_wait(&g_wake_incident, &g_mtx);
-        const ta_incident_t inc = g_incident_queue[g_incident_head];
-        g_incident_head = (g_incident_head + 1) % INCIDENT_QUEUE;
-        g_incident_count--;
-        pthread_mutex_unlock(&g_mtx);
-
-        llm_result_t r;
-        int got = -1;
-        if (ta_incident_prompt(&inc, prompt, sizeof prompt) > 0 && ta_incident_grammar(&inc, grammar, sizeof grammar) > 0) {
-            got = llm_ask(prompt, grammar, INCIDENT_DEADLINE_MS, (unsigned)ta_incident_max_tokens(), 1, LLM_MAX_LOOPS, answer, sizeof answer, &r);
-        }
-        char note[TA_WHY_MAX + 1];
-        const ta_result_t v = got > 0 ? ta_validate_incident(answer, &inc, note, sizeof note) : TA_ERR_SCHEMA;
-        const int from_model = v == TA_OK;
-        if (!from_model) plain_incident_note(&inc, note, sizeof note);
-        pthread_mutex_lock(&g_mtx);
-        add_incident(&inc, from_model ? "model" : "flags", note);
-    }
-    return NULL;
-}
-
 /* ---- publishing ---- */
 
 static void json_text(char *buf, int cap, int *len, const char *text) {
@@ -572,7 +530,7 @@ static int on_text(char *buf, int cap) {
     add(buf, cap, &len, "},\"incidents\":[");
     for (int i = g_n_incidents - 1; i >= 0; i--) {
         const incident_t *e = &g_incidents[i];
-        add(buf, cap, &len, "%s{\"age_s\":%.0f,\"cot\":%d,\"source\":\"%s\",\"note\":\"", i == g_n_incidents - 1 ? "" : ",", now - e->t, e->cot, e->source);
+        add(buf, cap, &len, "%s{\"age_s\":%.0f,\"cot\":%d,\"note\":\"", i == g_n_incidents - 1 ? "" : ",", now - e->t, e->cot);
         json_text(buf, cap, &len, e->note);
         add(buf, cap, &len, "\"}");
     }
@@ -735,24 +693,35 @@ static void *long_request(void *arg) {
 
 /* A short request with a 15 s deadline arrives while a long one is generating. */
 static int urgent_during_long(void) {
-    static char prompt[1024], grammar[4096], answer[OUTPUT_MAX];
+    static char prompt[PROMPT_MAX], grammar[GRAMMAR_MAX], answer[OUTPUT_MAX];
     long_job_t job;
     memset(&job, 0, sizeof job);
     pthread_t tid;
     pthread_create(&tid, NULL, long_request, &job);
     struct timespec wait = {12, 0};
     nanosleep(&wait, NULL);
-    const ta_incident_t inc = {2, "the oximeter driver restarted", "held FiO2", 2, 310, 310};
-    ta_incident_prompt(&inc, prompt, sizeof prompt);
-    ta_incident_grammar(&inc, grammar, sizeof grammar);
+    tf_facts_t one;
+    memset(&one, 0, sizeof one);
+    one.cot = 2;
+    one.seconds = 3600;
+    one.valid_seconds = 3500;
+    one.time_in_target_pct = 80;
+    one.fio2_early_pm = 310;
+    one.fio2_late_pm = 310;
+    one.fio2_max_pm = 310;
+    one.probe_events = 9;
+    one.risk_pct = -1;
+    one.flags = TF_FLAG_PROBE;
+    ta_watch_prompt(&one, 1, NULL, prompt, sizeof prompt);
+    ta_watch_grammar(&one, 1, grammar, sizeof grammar);
     llm_result_t r;
-    const int got = llm_ask(prompt, grammar, INCIDENT_DEADLINE_MS, (unsigned)ta_incident_max_tokens(), 1, LLM_MAX_LOOPS, answer, sizeof answer, &r);
-    char note[TA_WHY_MAX + 1];
-    const ta_result_t v = got > 0 ? ta_validate_incident(answer, &inc, note, sizeof note) : TA_ERR_SCHEMA;
+    const int got = llm_ask(prompt, grammar, URGENT_DEADLINE_MS, (unsigned)ta_watch_max_tokens(1), 1, LLM_MAX_LOOPS, answer, sizeof answer, &r);
+    ta_watch_t parsed;
+    const ta_result_t v = got > 0 ? ta_validate_watch(answer, &one, 1, &parsed) : TA_ERR_SCHEMA;
     pthread_join(tid, NULL);
     printf("{\"urgent_deadline_ms\":%u,\"urgent_total_ms\":%.0f,\"urgent_deadline_met\":%d,\"urgent_tokens\":%d,\"urgent_validator\":\"%s\",\"urgent_loops\":[%d,%d,%d,%d],"
            "\"long_total_ms\":%.0f,\"long_preempted\":%d,\"long_deadline_met\":%d,\"long_tokens\":%d}\n",
-           INCIDENT_DEADLINE_MS, r.total_ms, r.deadline_met, r.generated, ta_result_name(v), r.tokens_at_loops[1], r.tokens_at_loops[2], r.tokens_at_loops[3], r.tokens_at_loops[4],
+           URGENT_DEADLINE_MS, r.total_ms, r.deadline_met, r.generated, ta_result_name(v), r.tokens_at_loops[1], r.tokens_at_loops[2], r.tokens_at_loops[3], r.tokens_at_loops[4],
            job.result.total_ms, job.result.preempted, job.result.deadline_met, job.result.generated);
     return r.deadline_met && job.got >= 0 ? 0 : 1;
 }
@@ -920,7 +889,6 @@ int main(int argc, char **argv) {
     pthread_t tid;
     pthread_create(&tid, NULL, poller, NULL);
     pthread_create(&tid, NULL, model_watcher, NULL);
-    pthread_create(&tid, NULL, incident_worker, NULL);
     static int period;
     period = period_s;
     slow_worker(&period);
