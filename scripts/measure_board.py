@@ -1,12 +1,9 @@
-"""Measures the model on the QNX board over ssh and writes eval/results/board.json.
+"""Measures the model's timing on the QNX board over ssh and writes eval/results/board.json.
 
-    python scripts/measure_board.py placement --bench qnx/build/x86_64/llm_bench      (boot the guest with 12 GB for this)
-    python scripts/measure_board.py timing                                            (the image as built)
+    python scripts/measure_board.py     (with the guest running and the bench connected)
 
-placement: the same prompt and greedy sampling with the weights read into the process, mapped from an ordinary shared
-memory object, and mapped from the physically contiguous object llmstore makes; and the compute pool's spin before it sleeps.
-timing: how long the facts and the forecast take; and the board's own answers with their timings, at each loop count and
-under each deadline, on the held-out windows, with the late ticks of every cot during each configuration.
+How long the facts and the forecast take; and the time of the board's own answers at each loop count and under each deadline,
+on windows taken evenly across the held-out set, with the late ticks of every cot during each configuration.
 """
 
 from __future__ import annotations
@@ -61,38 +58,6 @@ def save(data: dict[str, Any]) -> None:
     RESULT.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
 
 
-def bench(
-    guest: Guest, model: str, mode: str, loops: str = "1,4", poll: int = 50, tokens: int = 48
-) -> list[dict[str, Any]]:
-    cmd = f"/tmp/llm_bench -m {shlex.quote(model)} -t 3 -f 1 -L {loops} -n {tokens} -M {mode} -w {poll} -X"
-    return json_lines(guest.run(cmd))
-
-
-def placement(guest: Guest, binary: Path) -> None:
-    guest.copy(binary, "/tmp/llm_bench")
-    guest.run("chmod +x /tmp/llm_bench")
-    data = load()
-    guest.run("/system/bin/llmstore -C -i /models/dory.gguf -n plain.gguf")
-    runs: dict[str, Any] = {}
-    # Twice each, in turn, so a slow spell on the host does not favour one placement.
-    for attempt in (1, 2):
-        for name, model, mode in (
-            ("read_into_process", "/models/dory.gguf", "read"),
-            ("mapped_shared_memory", "/dev/shmem/plain.gguf", "mmap"),
-            ("mapped_contiguous_shared_memory", "/dev/shmem/dory.gguf", "mmap"),
-        ):
-            runs.setdefault(name, []).append(bench(guest, model, mode))
-            print(attempt, name, runs[name][-1], flush=True)
-    data["weights_placement"] = runs
-    pools: dict[str, Any] = {}
-    for poll in (0, 50, 200):
-        pools[str(poll)] = bench(guest, "/dev/shmem/dory.gguf", "mmap", poll=poll)
-        print("poll", poll, pools[str(poll)], flush=True)
-    data["pool_poll"] = pools
-    guest.run("rm -f /dev/shmem/plain.gguf")
-    save(data)
-
-
 def wait_for_the_model(guest: Guest, limit_s: float = 300.0) -> None:
     t0 = time.monotonic()
     while time.monotonic() - t0 < limit_s:
@@ -143,7 +108,7 @@ def timing(guest: Guest, cases: Path, set_name: str, labels: list[str], limit: i
             kept_raw.write_text(raw + "\n--- stderr\n" + guest.last_stderr, encoding="utf-8")
             raise SystemExit(f"{label}: {len(rows)} answers of {expected}; not a result; raw output in {kept_raw}")
         after = [json.loads(guest.run(f"cat /dev/titra/cot{c}") or "{}") for c in (1, 2, 3)]
-        out = ROOT / "eval" / "results" / f"model_outputs_{set_name}_{label}.jsonl"
+        out = ROOT / "eval" / "results" / f"board_sample_{set_name}_{label}.jsonl"
         out.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
         asked = [r for r in rows if r["validator"] != "not asked"]
         generated = sum(int(r["generated"]) for r in rows)
@@ -173,22 +138,17 @@ def timing(guest: Guest, cases: Path, set_name: str, labels: list[str], limit: i
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("part", choices=("placement", "timing"))
-    ap.add_argument("--bench", type=Path, default=ROOT / "qnx" / "build" / "x86_64" / "llm_bench")
     ap.add_argument("--ssh", default="ssh")
     ap.add_argument("--scp", default="scp")
     ap.add_argument("--ssh-key")
-    ap.add_argument("--limit", type=int, default=70, help="how many windows the board replays per configuration")
+    ap.add_argument("--limit", type=int, default=7, help="how many windows the board replays per configuration")
     ap.add_argument("--config", action="append", help="a configuration from eval/model_cases.json; default all")
     ap.add_argument("--set", dest="set_name", default="held_out", choices=("development", "held_out"))
     ap.add_argument("--cases", type=Path, default=ROOT / "eval" / "model_cases.json")
     a = ap.parse_args()
     guest = Guest(a.ssh, a.ssh_key, a.scp)
-    if a.part == "placement":
-        placement(guest, a.bench)
-    else:
-        labels = a.config or [c["label"] for c in json.loads(a.cases.read_text(encoding="utf-8"))["configurations"]]
-        timing(guest, a.cases, a.set_name, labels, a.limit)
+    labels = a.config or [c["label"] for c in json.loads(a.cases.read_text(encoding="utf-8"))["configurations"]]
+    timing(guest, a.cases, a.set_name, labels, a.limit)
 
 
 if __name__ == "__main__":
