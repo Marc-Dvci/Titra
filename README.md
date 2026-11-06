@@ -11,9 +11,10 @@ language model beside them that the kernel keeps away from every valve.**
 [![Tests: 173 C and 297 Python](https://img.shields.io/badge/tests-173%20C%20%C2%B7%20297%20Python-188038)](#claims)
 [![Bench coverage: 96%](https://img.shields.io/badge/bench%20coverage-96%25-188038)](pyproject.toml)
 
-![The nurse station served by the QNX board: three cots, each with SpO2, FiO2, a 15-minute trend against the 91-95%
-target band and the controller's mode, and under each cot the advisor's action and sentence with its flags and
-record](docs/station.png)
+[![The film on YouTube: cot 2's probe has come off and the nurse station shows its fallback applied, while cots 1 and
+3 stay in control; alarm at 0.7 s and fallback at 29.7 s on the host clock](docs/film-thumbnail.png)](https://youtu.be/ioU4iw6M2Lk)
+
+**[Watch the film on YouTube](https://youtu.be/ioU4iw6M2Lk)** (2:55)
 
 I build software for healthcare, mostly for places with few staff and little equipment. Titra fills a gap I found in
 how preterm babies on CPAP receive their oxygen.
@@ -120,6 +121,10 @@ measures each of these from outside the guest.
 | qcc and mkqnximage | llama.cpp and Dory's looped graph built for QNX 8.0 with a CMake toolchain; the image holds Titra, HAM and the policy | [`qnx/llm/`](qnx/llm/), [`qnx/image/`](qnx/image/) |
 
 ### The nurse station
+
+![The nurse station served by the QNX board: three cots, each with SpO2, FiO2, a 15-minute trend against the 91-95%
+target band and the controller's mode, and under each cot the advisor's action and sentence with its flags and
+record](docs/station.png)
 
 The station (`station`, type `station_t`) runs on the board at priority 10, reads each cot's status through
 `/dev/titra/cotN` and the advice through `/dev/titra/advice`, keeps an hour of history and serves the view above on port
