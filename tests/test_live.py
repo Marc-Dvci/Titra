@@ -9,6 +9,30 @@ from bench.frames import BlFrame
 from bench.live import CotTwin, Link, Recorder, closed_loop, first, judge, last_fio2_before
 
 
+def test_a_restart_nobody_asked_for_is_reported() -> None:
+    before = {"controller-1": 2.9, "controller-2": 3.0, "model": 41}
+    after = {"controller-1": 325.8, "controller-2": 3.0, "model": 41}
+    assert live.unprompted_restarts(before, after, "warm-up") == [{"process": "controller-1", "during": "warm-up"}]
+
+
+def test_a_cases_own_restart_is_not_reported() -> None:
+    before = {"controller-2": 3.0, "model": 41}
+    after = {"controller-2": 700.0, "model": 99}
+    assert live.unprompted_restarts(before, after, "F7", ("controller-2",)) == [{"process": "model", "during": "F7"}]
+
+
+def test_a_look_that_got_no_answer_reports_nothing() -> None:
+    assert (
+        live.unprompted_restarts({"controller-1": 2.9, "model": None}, {"controller-1": None, "model": 41}, "F1") == []
+    )
+
+
+def test_only_the_faults_that_restart_a_process_expect_it() -> None:
+    assert live.on_purpose({"fault": "kill_titractl", "cot": 2}) == ("controller-2",)
+    assert live.on_purpose({"fault": "stop_llm", "cot": 0}) == ("model",)
+    assert live.on_purpose({"fault": "cpu_load", "cot": 0}) == ()
+
+
 def test_recorder_filters_by_time_cot_and_kind() -> None:
     rec = Recorder()
     a = rec.add(1, "bl", fio2=0.3, alarm=0)

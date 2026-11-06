@@ -460,6 +460,34 @@ def model_measures(fault: str, output: str) -> dict[str, Any]:
     return m
 
 
+def unprompted_restarts(
+    before: dict[str, Any], after: dict[str, Any], during: str, restarted_on_purpose: tuple[str, ...] = ()
+) -> list[dict[str, Any]]:
+    """What restarted between two looks at the guest and was not the case's own fault. An unanswered look says nothing."""
+    out = []
+    for name, was in before.items():
+        now = after.get(name)
+        if was is not None and now is not None and now != was and name not in restarted_on_purpose:
+            out.append({"process": name, "during": during})
+    return out
+
+
+async def process_starts(guest: Guest, cots: dict[int, CotTwin]) -> dict[str, Any]:
+    """When each controller started, and the model's pid: either one moves only if the process was restarted."""
+    starts: dict[str, Any] = {f"controller-{n}": (await guest.status(n, timeout=5.0)).get("started") for n in cots}
+    starts["model"] = (await guest.json_line("cat /dev/llm", timeout=5.0)).get("pid")
+    return starts
+
+
+def on_purpose(case: dict[str, Any]) -> tuple[str, ...]:
+    """The processes a fault case restarts by design."""
+    if case["fault"] in ("kill_titractl", "stop_titractl"):
+        return (f"controller-{case['cot']}",)
+    if case["fault"] in ("kill_llm", "stop_llm"):
+        return ("model",)
+    return ()
+
+
 def judge(expect: dict[str, Any], m: dict[str, Any]) -> bool:
     ok = True
     for key, budget in expect.items():
@@ -515,6 +543,8 @@ async def main_async(a: argparse.Namespace) -> None:
     for twin in cots.values():
         await twin.start()
     guest = Guest(types=a.types, ssh=a.ssh, key=a.ssh_key)
+    starts = await process_starts(guest, cots)
+    unprompted: list[dict[str, Any]] = []
 
     async def ticker() -> None:
         nxt = time.monotonic()
@@ -530,6 +560,9 @@ async def main_async(a: argparse.Namespace) -> None:
     connected = {n: bool(rec.since(0, n, "bl")) for n in cots}
     print(f"bench: frames from the guest per cot after warm-up: {connected}", flush=True)
     warm_end = rec.now()
+    later = await process_starts(guest, cots)
+    unprompted += unprompted_restarts(starts, later, "warm-up")
+    starts = {k: later.get(k) if later.get(k) is not None else v for k, v in starts.items()}
     matrix = json.loads(FAULTS.read_text(encoding="utf-8"))
     wanted = set(a.cases.split(",")) if a.cases else None
     results = []
@@ -540,6 +573,9 @@ async def main_async(a: argparse.Namespace) -> None:
         print(f"bench: {r['id']} {r['fault']}: {'pass' if r['pass'] else 'FAIL'} {r['measured']}", flush=True)
         results.append(r)
         await asyncio.sleep(a.gap)
+        later = await process_starts(guest, cots)
+        unprompted += unprompted_restarts(starts, later, r["id"], on_purpose(case))
+        starts = {k: later.get(k) if later.get(k) is not None else v for k, v in starts.items()}
     tick_task.cancel()
     summary = {
         "target": a.target,
@@ -551,6 +587,7 @@ async def main_async(a: argparse.Namespace) -> None:
         "closed_loop_whole_session_undisturbed_cots": {
             k: v for k, v in closed_loop(cots, 30.0, rec.now()).items() if k != "2"
         },
+        "unprompted_restarts": unprompted,
         "cases": results,
         "passed": sum(1 for r in results if r["pass"]),
         "total": len(results),
