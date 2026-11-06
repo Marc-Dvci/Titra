@@ -1,0 +1,158 @@
+{
+ "facts_and_forecast_time": [
+  {
+   "rounds": 1000,
+   "facts_mean_us": 62.9,
+   "facts_max_us": 841.6,
+   "tree_score_mean_us": 0.21,
+   "tree_score_max_us": 11.06,
+   "trees": 60,
+   "depth": 2,
+   "score": 0.17
+  }
+ ],
+ "answers_on_the_board": {
+  "held_out": {
+   "dory_1_loop": {
+    "answers": 5,
+    "not_asked": 2,
+    "valid": 5,
+    "gen_tok_s": 11.95,
+    "prompt_tok_s": 27.3,
+    "mean_answer_s": 20.6,
+    "longest_answer_s": 23.4,
+    "deadlines_met": 5,
+    "deadline_ms": 0,
+    "tokens_at_loops": [
+     380,
+     0,
+     0,
+     0
+    ],
+    "late_ticks_during": [
+     0,
+     0,
+     0
+    ],
+    "longest_tick_interval_s": [
+     1.001,
+     1.002,
+     1.001
+    ],
+    "seconds": 104
+   },
+   "dory_2_loops": {
+    "answers": 5,
+    "not_asked": 2,
+    "valid": 5,
+    "gen_tok_s": 8.52,
+    "prompt_tok_s": 18.1,
+    "mean_answer_s": 30.4,
+    "longest_answer_s": 35.4,
+    "deadlines_met": 5,
+    "deadline_ms": 0,
+    "tokens_at_loops": [
+     0,
+     380,
+     0,
+     0
+    ],
+    "late_ticks_during": [
+     0,
+     0,
+     0
+    ],
+    "longest_tick_interval_s": [
+     1.001,
+     1.002,
+     1.002
+    ],
+    "seconds": 152
+   },
+   "dory_4_loops": {
+    "answers": 5,
+    "not_asked": 2,
+    "valid": 4,
+    "gen_tok_s": 4.56,
+    "prompt_tok_s": 9.9,
+    "mean_answer_s": 55.9,
+    "longest_answer_s": 59.6,
+    "deadlines_met": 5,
+    "deadline_ms": 0,
+    "tokens_at_loops": [
+     0,
+     0,
+     0,
+     381
+    ],
+    "late_ticks_during": [
+     0,
+     0,
+     0
+    ],
+    "longest_tick_interval_s": [
+     1.004,
+     1.027,
+     1.011
+    ],
+    "seconds": 280
+   },
+   "dory_elastic_30s": {
+    "answers": 5,
+    "not_asked": 2,
+    "valid": 5,
+    "gen_tok_s": 10.14,
+    "prompt_tok_s": 24.8,
+    "mean_answer_s": 23.2,
+    "longest_answer_s": 27.4,
+    "deadlines_met": 5,
+    "deadline_ms": 30000,
+    "tokens_at_loops": [
+     368,
+     12,
+     0,
+     0
+    ],
+    "late_ticks_during": [
+     0,
+     0,
+     0
+    ],
+    "longest_tick_interval_s": [
+     1.004,
+     1.027,
+     1.011
+    ],
+    "seconds": 116
+   },
+   "dory_elastic_120s": {
+    "answers": 5,
+    "not_asked": 2,
+    "valid": 4,
+    "gen_tok_s": 4.41,
+    "prompt_tok_s": 9.4,
+    "mean_answer_s": 58.8,
+    "longest_answer_s": 65.3,
+    "deadlines_met": 5,
+    "deadline_ms": 120000,
+    "tokens_at_loops": [
+     0,
+     32,
+     1,
+     348
+    ],
+    "late_ticks_during": [
+     0,
+     0,
+     0
+    ],
+    "longest_tick_interval_s": [
+     1.004,
+     1.027,
+     1.011
+    ],
+    "seconds": 294
+   }
+  }
+ }
+}
