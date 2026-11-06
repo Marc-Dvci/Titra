@@ -3,7 +3,8 @@
 Titra is an oxygen controller for preterm babies on low-cost CPAP. It reads each baby's SpO2 once a second, sets the
 air-oxygen blender to hold SpO2 in the 91-95% target range, and puts the cot in a defined safe state when a sensor, a
 cable or a piece of its own software fails. One QNX 8.0 board serves several cots, and a failure in one cot leaves the
-others under control.
+others under control. Beside the controllers, an on-board advisor tells the nurse which cot to go to first; it has no
+path to any blender ([ADVISOR.md](ADVISOR.md)).
 
 ## Who it is for
 
@@ -11,7 +12,7 @@ A night-shift nurse in a neonatal unit with several babies on bubble CPAP and on
 feeding the baby in cot 1 when the oximeter probe slips off the foot of the baby in cot 2. Under manual control, the
 oxygen setting in cot 2 stays wherever it was until someone notices. Under Titra, cot 2 holds its last setting and raises
 an alarm at the cot. If the probe is not back within 30 seconds, it moves to a fallback setting that never sits below
-the baby's recent need. Cots 1 and 3 keep their own control throughout.
+the baby's recent need. Cots 1 and 3 keep their own control throughout. The advisor puts cot 2 first and says why.
 
 ## The problem, in numbers
 
@@ -41,7 +42,10 @@ bounded time to a safe state, which the fault matrix below measures.
 | Timer pulses | The controller's 1 Hz tick |
 | High Availability Manager | Restarts a driver that dies; restarts a controller that dies, and kills one that misses its heartbeats |
 | Security policy | Every process runs under its own type, one set per cot; only the controller of cot N may connect to the drivers of cot N |
-| Thread priorities | Control at priority 30, status reads and the nurse station at 10 |
+| Thread priorities | Control at priority 30, status reads and the nurse station at 10, the advisor at 8, the model at 5 and 6 |
+| Runmasks and startup clusters | Controllers on CPU 0, the advisor and the model on CPUs 1-3 |
+| Fixed-priority channel | A client's message does not lift the model's receiving thread |
+| Shared memory | The model's weights, sealed and read-only, outlive its process |
 
 ## Architecture
 
@@ -55,6 +59,8 @@ bounded time to a safe state, which the fault matrix below measures.
  simulated blender, cot N         <--link--    valved -n N     valvedN_t    /dev/valve/N
    own watchdog: hold, then fallback
                                                station         station_t    HTTP nurse view, priority 10
+                                               advisor         advisor_t    /dev/titra/advice, CPUs 1-3, priority 8
+                                               llm             llm_t        /dev/llm, CPUs 1-3, priority 5
                                                ham             ham_t        restarts and heartbeats
 ```
 
@@ -160,7 +166,8 @@ A fixed-gain proportional-integral controller on the error between SpO2 and a 93
   can move FiO2 by at most 20 times the per-second limit before the frozen-value rule stops trusting it;
 - on restart, control starts from the current FiO2 reported by the blender driver, so a restart causes no step.
 
-Gains and limits are set in `core/include/titra/config.h` and tuned on the development scenarios only.
+Gains and limits are set in [`core/src/control.c`](../core/src/control.c) and tuned on the development scenarios only
+([`eval/tuned_params.json`](../eval/tuned_params.json)).
 
 ## Evaluation
 
@@ -190,5 +197,5 @@ context, and they come from different patients and simulators.
 
 ## Real and simulated
 
-The QNX processes, drivers, resource managers, restart and security policy run on QNX 8.0 in QEMU. The baby, the
-oximeter and the blender are simulated on the host.
+The QNX processes, drivers, resource managers, restart, security policy and the language model run on QNX 8.0 in QEMU.
+The baby, the oximeter and the blender are simulated on the host.

@@ -1,0 +1,90 @@
+<!doctype html>
+<!-- Source of docs/architecture.png, the diagram in the README. Rebuild: python scripts/render_diagram.py -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Titra architecture</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; width: 1200px; height: 800px; background: #fff; color: #202124; position: relative; overflow: hidden;
+         font-family: Inter, Roboto, 'Segoe UI', Arial, sans-serif; }
+  .guest { position: absolute; left: 276px; top: 58px; width: 730px; height: 690px; border-radius: 22px; background: #f6f8fa; border: 1px solid #d0d7de; }
+  .zone { position: absolute; border-radius: 16px; background: #fff; border: 1px dashed #c6cacf; }
+  .zone span, .tag { position: absolute; font-size: 18px; color: #5f6368; white-space: nowrap; }
+  .zone span { left: 16px; top: 8px; }
+  .node { position: absolute; height: 82px; border: 2px solid #57606a; border-radius: 14px; background: #fff; display: flex; flex-direction: column;
+          align-items: center; justify-content: center; gap: 3px; }
+  .node b { font-size: 23px; font-weight: 600; }
+  .node i { font-style: normal; font-family: 'JetBrains Mono', 'DejaVu Sans Mono', Consolas, monospace; font-size: 16px; color: #1a73e8; }
+  .node.host { background: #fff; }
+  .node.host i { font-family: inherit; color: #5f6368; font-size: 17px; }
+  .node.ctl { border-color: #1a73e8; }
+  svg { position: absolute; left: 0; top: 0; }
+  .red { color: #c5221f; }
+  .title { position: absolute; left: 298px; top: 70px; font-size: 19px; font-weight: 600; white-space: nowrap; }
+  .title span { font-weight: 400; color: #5f6368; }
+</style>
+</head>
+<body>
+  <div class="guest"></div>
+  <div class="title">QNX 8.0 guest <span>· cot 2, one of three</span></div>
+  <div class="zone" style="left:288px;top:104px;width:706px;height:138px"><span>CPU 0, priority 30</span></div>
+  <div class="zone" style="left:300px;top:448px;width:694px;height:288px"><span style="top:auto;bottom:6px">CPUs 1-3, below every controller</span></div>
+
+  <div class="tag" style="left:30px;top:108px">Host</div>
+  <div class="tag" style="left:1038px;top:108px">Host</div>
+  <div class="node host" style="left:30px;top:146px;width:202px"><b>Simulated baby</b><i>and oximeter</i></div>
+  <div class="node" style="left:298px;top:146px;width:188px"><b>spo2d</b><i>spo2d2_t</i></div>
+  <div class="node ctl" style="left:548px;top:146px;width:188px"><b>titractl</b><i>titractl2_t</i></div>
+  <div class="node" style="left:798px;top:146px;width:188px"><b>valved</b><i>valved2_t</i></div>
+  <div class="node host" style="left:1038px;top:146px;width:150px"><b>Blender</b><i>own watchdog</i></div>
+  <div class="node" style="left:298px;top:300px;width:188px"><b>HAM</b><i>ham_t</i></div>
+  <div class="node" style="left:548px;top:300px;width:188px"><b>station</b><i>station_t</i></div>
+  <div class="node" style="left:430px;top:490px;width:340px"><b>advisor</b><i>advisor_t: facts, flags, validator</i></div>
+  <div class="node" style="left:430px;top:622px;width:340px"><b>llm</b><i>llm_t: Dory, priority 5, user 300</i></div>
+  <div class="node host" style="left:812px;top:636px;width:168px"><b>Weights</b><i>sealed, read-only</i></div>
+
+  <svg width="1200" height="800">
+    <defs>
+      <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#57606a"/></marker>
+    </defs>
+    <g stroke="#57606a" stroke-width="2" fill="none" marker-end="url(#a)">
+      <line x1="232" y1="187" x2="296" y2="187"/>
+      <line x1="486" y1="187" x2="546" y2="187"/>
+      <line x1="736" y1="187" x2="796" y2="187"/>
+      <line x1="986" y1="187" x2="1036" y2="187"/>
+      <line x1="600" y1="572" x2="600" y2="620"/>
+      <line x1="812" y1="677" x2="772" y2="677" stroke-dasharray="6 5"/>
+    </g>
+    <g stroke="#57606a" stroke-width="2" fill="none" stroke-dasharray="7 6" marker-end="url(#a)">
+      <line x1="642" y1="228" x2="642" y2="298"/>
+      <path d="M590 228 C 560 268 440 262 410 298"/>
+      <path d="M716 228 C 792 300 792 430 740 488"/>
+      <line x1="600" y1="490" x2="600" y2="384"/>
+      <path d="M430 663 C 362 640 340 500 368 384"/>
+    </g>
+    <g stroke="#c5221f" stroke-width="2" fill="none" stroke-dasharray="7 6">
+      <path d="M736 322 C 790 322 832 290 846 228"/>
+      <path d="M770 531 C 880 531 900 360 900 228"/>
+      <path d="M770 642 C 950 610 952 360 952 228"/>
+    </g>
+    <g stroke="#c5221f" stroke-width="3">
+      <line x1="834" y1="250" x2="852" y2="268"/><line x1="852" y1="250" x2="834" y2="268"/>
+      <line x1="891" y1="254" x2="909" y2="272"/><line x1="909" y1="254" x2="891" y2="272"/>
+      <line x1="943" y1="254" x2="961" y2="272"/><line x1="961" y1="254" x2="943" y2="272"/>
+    </g>
+  </svg>
+
+  <div class="tag" style="left:248px;top:157px">$OX</div>
+  <div class="tag" style="left:490px;top:157px">devctl</div>
+  <div class="tag" style="left:740px;top:157px">devctl</div>
+  <div class="tag" style="left:992px;top:157px">$BL</div>
+  <div class="tag" style="left:306px;top:262px">heartbeat</div>
+  <div class="tag" style="left:652px;top:262px">status</div>
+  <div class="tag" style="left:790px;top:392px">status</div>
+  <div class="tag" style="left:610px;top:426px">advice</div>
+  <div class="tag" style="left:612px;top:584px">prompt, grammar, answer</div>
+  <div class="tag" style="left:396px;top:584px">heartbeat</div>
+  <div class="tag red" style="left:1014px;top:254px">refused by the<br>kernel's policy</div>
+</body>
+</html>

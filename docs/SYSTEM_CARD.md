@@ -45,6 +45,15 @@ final. These figures describe simulated babies.
 
 ## Evaluation
 
+On held-out seeds, run once after every choice was final:
+
+| Part | Result |
+|---|---|
+| Flags, 90 windows | Recall 100% for probe trouble, hold or fallback and wean opportunity, 97.5% for frequent desaturations, 90% for rising need; 4 windows with a flag the case did not expect |
+| Forecast, 11,848 minutes | AUROC 0.704 against 0.668 for the best rule; precision 60.2% against 49.5% at 2 alerts per cot per hour |
+| Language model, 54 answers asked, one loop | 98.1% valid; 89.0% of flags spoken to; the first cot equals the rules' first in 97.7%; no digit in any sentence of the model |
+| Containment, on the board | The kernel refuses the model 1400 times of 1400; 0 missed ticks on any cot under 10 minutes of full model load |
+
 Results are in [ADVISOR.md](ADVISOR.md#measured). The case sets are committed before the code that scores them:
 [flags](../eval/flag_cases.json), [forecast](../eval/risk_cases.json), [model](../eval/model_cases.json). CI runs every
 recorded answer through the validator again.
@@ -52,7 +61,8 @@ recorded answer through the validator again.
 ## Human oversight
 
 The nurse decides. The page says where each note came from: the model checked against the facts, or the flags alone. The
-system has no way to act on its own advice.
+system has no way to act on its own advice. A nurse who knows better writes a note on the cot, and it stays on that row as
+the nurse wrote it. A wrong flag or threshold is a change to the C core and its case set, in this repository, with its test.
 
 ## Known limits
 
