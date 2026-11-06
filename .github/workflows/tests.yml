@@ -105,3 +105,5 @@ jobs:
       - run: codespell
       - run: python scripts/check_links.py
       - run: python scripts/check_placeholders.py
+      - name: Shell scripts run as the README calls them
+        run: test -z "$(git ls-files -s '*.sh' | grep -v '^100755')"
